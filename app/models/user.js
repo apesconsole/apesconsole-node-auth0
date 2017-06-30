@@ -3,11 +3,10 @@ var mongoose = require('mongoose');
 var Schema = mongoose.Schema;
 
 // set up a mongoose model and pass it using module.exports
-module.exports = mongoose.model('user', new Schema({ 
-	userid: String,
+module.exports = mongoose.model('USERS', new Schema({ 
+	userId: String,
 	password: String, 
     name: String,
-	address: String,
-	phone: String,
-	type: String
+	type: String,
+	homeUrl: String
 }));
