@@ -65,7 +65,7 @@ router.post('/setup', function(req, res) {
 router.post('/authenticate', function(req, res) {
   // find the user
   user.findOne({
-    userid: req.body.userid
+    userId: req.body.userId
   }, function(err, userData) {
     if (err) throw err;
     if (!userData) {
