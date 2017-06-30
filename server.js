@@ -131,7 +131,7 @@ router.get('/user', function(req, res) {
   console.log('looking for ->' + userId)
   user.findOne({'userId': userId}, function(err, userData) {
 	userData.password = null;
-	menu.find({'type': userData.type}, function(err, menuList) {
+	menu.find({'type': userData.type, 'active': true }, function(err, menuList) {
 		res.json({success: true, data: userData, menu: menuList});
 	});
   });
