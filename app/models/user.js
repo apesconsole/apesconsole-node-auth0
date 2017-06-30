@@ -9,4 +9,4 @@ module.exports = mongoose.model('USERS', new Schema({
     name: String,
 	type: String,
 	homeUrl: String
-}));
+}),'USERS');

@@ -125,6 +125,15 @@ router.get('/', function(req, res) {
   res.json({ message: 'Welcome to SmartCom! Please Authenticate to Get Access Token.' });
 });
 
+router.get('/user', function(req, res) {
+  var userId = req.body.userId || req.query.userId;
+  console.log('looking for ->' + userId)
+  user.findOne({'userId': userId}, function(err, userData) {
+	userData.password = null;
+    res.json({success: true, data: userData});
+  });
+});
+
 router.get('/users', function(req, res) {
   user.find({}, function(err, users) {
     res.json({success: true, data: users});
