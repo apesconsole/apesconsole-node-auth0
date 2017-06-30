@@ -15,6 +15,7 @@ var logger = require("logging_component");
 var jwt    = require('jsonwebtoken'); // used to create, sign, and verify tokens
 var config = require('./config'); // get our config file
 var user   = require('./app/models/user'); // get our mongoose model
+var menu   = require('./app/models/menu'); 
 
 mongoose.connect(config.database); // connect to database
 app.set('superSecret', config.secret); 
@@ -130,7 +131,9 @@ router.get('/user', function(req, res) {
   console.log('looking for ->' + userId)
   user.findOne({'userId': userId}, function(err, userData) {
 	userData.password = null;
-    res.json({success: true, data: userData});
+	menu.find({'type': userData.type}, function(err, menuList) {
+		res.json({success: true, data: userData, menu: menuList});
+	});
   });
 });
 
