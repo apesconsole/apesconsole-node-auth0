@@ -15,9 +15,9 @@ var logger = require("logging_component");
 var jwt    = require('jsonwebtoken'); // used to create, sign, and verify tokens
 var config = require('./config'); // get our config file
 var user   = require('./app/models/user'); // get our mongoose model
-var menu   = require('./app/models/menu'); 
-
-mongoose.connect(config.database); // connect to database
+var menu   = require('./app/models/menu');
+var trafficData
+		   = require('./app/models/trafficData');
 app.set('superSecret', config.secret); 
 
 // use body parser so we can get info from POST and/or URL parameters
@@ -75,11 +75,13 @@ router.post('/authenticate', function(req, res) {
       // check if password matches
       if (userData.password != req.body.password) {
         res.json({ success: false, message: 'Wrong password' });
-      } else {
+      } else if(!userData.active){
+		res.json({ success: false, message: 'User is Inactive. Contact Admin.' });
+	  } else {
         // if user is found and password is right
         // create a token
         var token = jwt.sign(userData, app.get('superSecret'), {
-          expiresIn : 60 // expires in 1 minute
+          expiresIn : 60*30 // expires in 1 minute
         });
         // return the information including token as JSON
         res.json({
@@ -131,7 +133,7 @@ router.get('/user', function(req, res) {
   console.log('looking for ->' + userId)
   user.findOne({'userId': userId}, function(err, userData) {
 	userData.password = null;
-	menu.find({'type': userData.type, 'active': true }, function(err, menuList) {
+	menu.find({'userId': userId }, function(err, menuList) {
 		res.json({success: true, data: userData, menu: menuList});
 	});
   });
@@ -142,6 +144,14 @@ router.get('/users', function(req, res) {
     res.json({success: true, data: users});
   });
 }); 
+
+
+router.get('/transportdataset', function(req, res) {
+  trafficData.find({}).sort({month: 1}).exec(function(err, transportdata) {
+    res.json({success: true, data: transportdata});
+  });
+}); 
+
 
 app.use('/api', router);
 
