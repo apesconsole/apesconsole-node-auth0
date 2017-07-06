@@ -195,7 +195,8 @@ router.post('/savesitedata', function(req, res) {
 			labour: siteJson.labour, 
 			updatedBy: userId,
 			updateDate: new Date(),
-			approved: false //Any Data Update is not Approved
+			approvedInventory: siteJson.approvedInventory,
+			approvedLabour: siteJson.approvedLabour
 		},function(err) {
 		if (err) {
 			res.json({ success: true, operation: false });
