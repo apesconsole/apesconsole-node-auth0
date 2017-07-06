@@ -18,6 +18,11 @@ var user   = require('./app/models/user'); // get our mongoose model
 var menu   = require('./app/models/menu');
 var trafficData
 		   = require('./app/models/trafficData');
+var cnstrntSiteUserMap
+		   = require('./app/models/cnstrntSiteUserMap');
+var cnstrntSite
+		   = require('./app/models/cnstrntSite');		   
+		   
 app.set('superSecret', config.secret); 
 
 // use body parser so we can get info from POST and/or URL parameters
@@ -31,9 +36,9 @@ app.use(function (req, res, next) {
     // Website you wish to allow to connect
     res.setHeader('Access-Control-Allow-Origin', '*');
     // Request methods you wish to allow
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     // Request headers you wish to allow
-    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type');
+    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type,x-www-form-urlencoded, Accept');
     // Set to true if you need the website to include cookies in the requests sent
     // to the API (e.g. in case you use sessions)
     res.setHeader('Access-Control-Allow-Credentials', true);
@@ -152,6 +157,73 @@ router.get('/transportdataset', function(req, res) {
   });
 }); 
 
+router.get('/loadcnstrntsites', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
+	  var sites = [];
+	  validSites.forEach(function(site) {
+		  sites[sites.length] = site.siteId;
+	  });
+	  if(validSites.length > 0)
+	  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
+		  for(var i=0;i<siteData.length;i++){
+			  siteData[i].edit = false;
+			  for(var j=0;j<validSites.length;j++){
+				  if(siteData[i].siteId == validSites[j].siteId){
+					siteData[i].edit = validSites[j].edit;
+					siteData[i].approve = validSites[j].approve;
+					j = validSites.length;
+				  } 
+			  }
+		  }
+		  
+		  res.json({success: true, data: siteData});
+	  });
+	  else res.json({success: true, data: []});
+  });
+}); 
+
+
+router.post('/savesitedata', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteData = req.body.siteData || req.query.siteData;
+    var siteJson = JSON.parse(siteData); 
+	
+	//Update Site Data
+	cnstrntSite.update({siteId: siteJson.siteId}, {
+			inventory: siteJson.inventory, 
+			labour: siteJson.labour, 
+			updatedBy: userId,
+			updateDate: new Date(),
+			approved: false //Any Data Update is not Approved
+		},function(err) {
+		if (err) {
+			res.json({ success: true, operation: false });
+		} else {
+			logger.log('Site Updated successfully');
+			res.json({ success: true , operation: true });
+		}
+	});
+});
+
+router.post('/approvesitedata', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteId = req.body.siteId || req.query.siteId;
+	
+	//Approve Site Data
+	cnstrntSite.update({siteId: siteId}, {
+			approvedBy: userId,
+			approvalDate: new Date(),
+			approved: true
+		},function(err) {
+		if (err) {
+			res.json({ success: true, operation: false });
+		} else {
+			logger.log('Site Data Approved successfully');
+			res.json({ success: true , operation: true });
+		}
+	});
+});
 
 app.use('/api', router);
 

@@ -1,3 +1,3 @@
 module.exports = {
-    'secret'					: process.env.AUTH_SECRET || 'qwertyuisdwrtew45765yhtrdheqwc34tfgfd'
+    'secret'					: process.env.AUTH_SECRET 			|| 'dfsdfwF453Ddsfsdfgeqg234tefvSl'
 };
