@@ -209,12 +209,14 @@ router.post('/savesitedata', function(req, res) {
 router.post('/approvesitedata', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteId = req.body.siteId || req.query.siteId;
-	
+	var approvedInventory = req.body.approvedInventory || req.query.approvedInventory;
+	var approvedLabour = req.body.approvedLabour || req.query.approvedLabour;
 	//Approve Site Data
 	cnstrntSite.update({siteId: siteId}, {
 			approvedBy: userId,
 			approvalDate: new Date(),
-			approved: true
+			approvedInventory: approvedInventory,
+			approvedLabour: approvedLabour
 		},function(err) {
 		if (err) {
 			res.json({ success: true, operation: false });

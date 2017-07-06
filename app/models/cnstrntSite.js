@@ -47,6 +47,7 @@ module.exports = connection.model('SITE', new Schema({
 	updateDate: Date,
 	approvedBy: String,
 	approvalDate: Date,
-	approved: Boolean,
+    approvedInventry: Boolean,
+    approvedLabour: Boolean,
 	active: Boolean
 }),'SITE');
