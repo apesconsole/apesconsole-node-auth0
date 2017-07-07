@@ -21,7 +21,11 @@ var trafficData
 var cnstrntSiteUserMap
 		   = require('./app/models/cnstrntSiteUserMap');
 var cnstrntSite
-		   = require('./app/models/cnstrntSite');		   
+		   = require('./app/models/cnstrntSite');	
+var cnstrntSiteAprvd
+		   = require('./app/models/cnstrntSiteAprvd');
+var cnstrntSiteAudit
+		   = require('./app/models/cnstrntSiteAudit');		   
 		   
 app.set('superSecret', config.secret); 
 
@@ -157,6 +161,23 @@ router.get('/transportdataset', function(req, res) {
   });
 }); 
 
+//View Site Data 
+router.get('/loadapprovedcnstrntsites', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
+	  var sites = [];
+	  validSites.forEach(function(site) {
+		  sites[sites.length] = site.siteId;
+	  });
+	  if(validSites.length > 0)
+	  cnstrntSiteAprvd.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
+		  res.json({success: true, data: siteData});
+	  });
+	  else res.json({success: true, data: []});
+  });
+});
+
+//Edit Data
 router.get('/loadcnstrntsites', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
@@ -222,8 +243,42 @@ router.post('/approvesitedata', function(req, res) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-			logger.log('Site Data Approved successfully');
-			res.json({ success: true , operation: true });
+		    //Save Approved Data
+			console.log('Edit Data Saved in cnstrntSite');
+			cnstrntSite.findOne({siteId: siteId}).exec(function(err, siteJson) {
+				logger.log('Data Id removed successfully');
+			    cnstrntSiteAprvd.remove({siteId: siteId}, function(err, removed) {
+					logger.log('Site Approved data remove - ' + removed);
+				    var freshData = new cnstrntSiteAprvd({
+						siteId: siteJson.siteId,
+						projectId: siteJson.projectId, 
+						siteName: siteJson.siteName,
+						address: siteJson.address,
+						edit: false,
+						approve: false,
+						geoTag: siteJson.geoTag,
+						inventory: siteJson.inventory,
+						labour: siteJson.labour,
+						status: siteJson.status,
+						updatedBy: siteJson.updatedBy,
+						updateDate: siteJson.updateDate,
+						approvedBy: userId,
+						approvalDate: new Date(),
+						approvedInventory: approvedInventory,
+						approvedLabour: approvedLabour,	
+						active: siteJson.active
+					});
+					freshData.save(function(err) {
+						logger.log('Site Approved try - ' + err);
+						if (err) {
+							res.json({ success: true, operation: false });
+						} else {
+							logger.log('Site Approved successfully');
+							res.json({ success: true , operation: true });
+						}
+					});
+				});
+			});
 		}
 	});
 });

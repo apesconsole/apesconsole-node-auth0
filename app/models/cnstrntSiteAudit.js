@@ -26,7 +26,7 @@ var statusSchema = mongoose.Schema({
 		risks: String
 	},{ _id : false });
 // set up a mongoose model and pass it using module.exports
-module.exports = connection.model('SITE', new Schema({ 
+module.exports = connection.model('SITE_AUDIT', new Schema({ 
 	siteId: String,
 	projectId: String, 
     siteName: String,
@@ -35,7 +35,7 @@ module.exports = connection.model('SITE', new Schema({
 	approve: Boolean, //This is set by Service
 	geoTag: {
 		lat: String,
-		lonG: String	
+		lonG: String 
 	},
 	inventory: [
 		inventorySchema
@@ -53,4 +53,4 @@ module.exports = connection.model('SITE', new Schema({
     approvedInventory: Boolean,
     approvedLabour: Boolean,
 	active: Boolean
-}),'SITE');
+}),'SITE_AUDIT');
