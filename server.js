@@ -186,7 +186,7 @@ router.get('/loadcnstrntsites', function(req, res) {
 		  sites[sites.length] = site.siteId;
 	  });
 	  if(validSites.length > 0)
-	  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
+	  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}, {siteId : 1, siteName: 1, projectId: 1, edit: 1, approve: 1}).sort({siteId: 1}).exec(function(err, siteData) {
 		  for(var i=0;i<siteData.length;i++){
 			  siteData[i].edit = false;
 			  for(var j=0;j<validSites.length;j++){
@@ -197,13 +197,25 @@ router.get('/loadcnstrntsites', function(req, res) {
 				  } 
 			  }
 		  }
-		  
 		  res.json({success: true, data: siteData});
 	  });
 	  else res.json({success: true, data: []});
   });
 }); 
 
+router.get('/loadcnstrntsite', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var siteEdit = req.body.siteEdit || req.query.siteEdit;
+  var siteApprove = req.body.siteApprove || req.query.siteApprove;
+  cnstrntSite.findOne({ 'siteId': siteId, 'active': true}).exec(function(err, siteData) {
+	  siteData.edit = siteEdit;
+	  siteData.approve = siteApprove;
+	  if(!err)
+		res.json({success: true, data: siteData});
+	  else res.json({success: true, data: []});
+  });
+}); 
 
 router.post('/savesitedata', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
@@ -223,33 +235,30 @@ router.post('/savesitedata', function(req, res) {
 			res.json({ success: true, operation: false });
 		} else {
 			logger.log('Site Updated successfully');
-			res.json({ success: true , operation: true });
+			res.json({ success: true , operation: true , siteDetail: siteJson});
 		}
 	});
 });
 
 router.post('/approvesitedata', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
-	var siteId = req.body.siteId || req.query.siteId;
-	var approvedInventory = req.body.approvedInventory || req.query.approvedInventory;
-	var approvedLabour = req.body.approvedLabour || req.query.approvedLabour;
+	var siteDataType = req.body.siteDataType || req.query.siteDataType;
+	var siteData = req.body.siteData || req.query.siteData;
+    var siteDataJson = JSON.parse(siteData); 
 	//Approve Site Data
-	cnstrntSite.update({siteId: siteId}, {
+	cnstrntSite.update({siteId: siteDataJson.siteId}, {
 			approvedBy: userId,
 			approvalDate: new Date(),
-			approvedInventory: approvedInventory,
-			approvedLabour: approvedLabour
+			approvedInventory: siteDataType == 'inventory' ? true : siteDataJson.approvedInventory,
+			approvedLabour: siteDataType == 'labour' ? true : siteDataJson.approvedLabour
 		},function(err) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-		    //Save Approved Data
-			console.log('Edit Data Saved in cnstrntSite');
-			cnstrntSite.findOne({siteId: siteId}).exec(function(err, siteJson) {
-				logger.log('Data Id removed successfully');
-			    cnstrntSiteAprvd.remove({siteId: siteId}, function(err, removed) {
+			cnstrntSiteAprvd.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteJson) {
+			    cnstrntSiteAprvd.remove({siteId: siteDataJson.siteId}, function(err, removed) {
 					logger.log('Site Approved data remove - ' + removed);
-				    var freshData = new cnstrntSiteAprvd({
+					var dataObj = {
 						siteId: siteJson.siteId,
 						projectId: siteJson.projectId, 
 						siteName: siteJson.siteName,
@@ -257,29 +266,73 @@ router.post('/approvesitedata', function(req, res) {
 						edit: false,
 						approve: false,
 						geoTag: siteJson.geoTag,
-						inventory: siteJson.inventory,
-						labour: siteJson.labour,
+						inventory: siteDataType == 'inventory' ? siteDataJson.inventory : siteJson.inventory,
+						labour: siteDataType == 'labour' ? siteDataJson.labour : siteJson.labour,
 						status: siteJson.status,
-						updatedBy: siteJson.updatedBy,
-						updateDate: siteJson.updateDate,
+						updatedBy: siteDataJson.updatedBy,
+						updateDate: siteDataJson.updateDate,
 						approvedBy: userId,
 						approvalDate: new Date(),
-						approvedInventory: approvedInventory,
-						approvedLabour: approvedLabour,	
+						approvedInventory: true,
+						approvedLabour: true,	
 						active: siteJson.active
-					});
+					};
+				    var freshData = new cnstrntSiteAprvd(dataObj);
 					freshData.save(function(err) {
 						logger.log('Site Approved try - ' + err);
 						if (err) {
 							res.json({ success: true, operation: false });
 						} else {
 							logger.log('Site Approved successfully');
-							res.json({ success: true , operation: true });
+							res.json({ success: true , operation: true, siteDetail: dataObj});
 						}
 					});
 				});
 			});
 		}
+	});
+});
+
+router.post('/rejectsitedata', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteDataType = req.body.siteDataType || req.query.siteDataType;
+	var siteData = req.body.siteData || req.query.siteData;
+    var siteDataJson = JSON.parse(siteData); 
+	cnstrntSiteAprvd.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteJson) {
+		cnstrntSite.remove({siteId: siteDataJson.siteId}, function(err, removed) {
+			logger.log('Data Rject data - ' + siteDataType);
+			var dataObj = {
+				siteId: siteJson.siteId,
+				projectId: siteJson.projectId, 
+				siteName: siteJson.siteName,
+				address: siteJson.address,
+				edit: false,
+				approve: false,
+				geoTag: siteJson.geoTag,
+				inventory: siteDataType == 'inventory' ? siteJson.inventory : siteDataJson.inventory,
+				labour: siteDataType == 'labour' ? siteJson.labour : siteDataJson.labour,
+				status: siteJson.status,
+				updatedBy: siteJson.updatedBy,
+				updateDate: siteJson.updateDate,
+				approvedBy: userId,
+				approvalDate: new Date(),
+				approvedInventory: siteDataType == 'inventory' ? true : siteDataJson.approvedInventory,
+				approvedLabour: siteDataType == 'labour' ? true : siteDataJson.approvedLabour,	
+				active: siteJson.active
+			};
+			logger.log('Data Rject data - ' + JSON.stringify(dataObj));
+			var freshData = new cnstrntSite(dataObj);
+			freshData.save(function(err) {
+				logger.log('Site Approved try - ' + err);
+				if (err) {
+					res.json({ success: true, operation: false });
+				} else {
+					logger.log('Site Approved successfully');
+					res.json({ success: true , operation: true, siteDetail: dataObj});
+				}
+			});			
+		});
+		
 	});
 });
 
