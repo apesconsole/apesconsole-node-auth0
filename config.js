@@ -1,3 +1,3 @@
 module.exports = {
-    'secret'					: process.env.AUTH_SECRET 			|| 'dfsdfwF453Ddsfsdfgeqg234tefvSl'
+    'secret'					: process.env.AUTH_SECRET 			|| 'dfsdfwF453Ddsfsdfgeqg234tefvS'
 };

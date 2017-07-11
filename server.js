@@ -16,16 +16,15 @@ var jwt    = require('jsonwebtoken'); // used to create, sign, and verify tokens
 var config = require('./config'); // get our config file
 var user   = require('./app/models/user'); // get our mongoose model
 var menu   = require('./app/models/menu');
-var trafficData
-		   = require('./app/models/trafficData');
+
 var cnstrntSiteUserMap
-		   = require('./app/models/cnstrntSiteUserMap');
+		   = require('./app/models/cnstrntSiteUserMap');       
+var inventoryConfig
+		   = require('./app/models/inventoryConfig');
 var cnstrntSite
-		   = require('./app/models/cnstrntSite');	
-var cnstrntSiteAprvd
-		   = require('./app/models/cnstrntSiteAprvd');
-var cnstrntSiteAudit
-		   = require('./app/models/cnstrntSiteAudit');		   
+		   = require('./app/models/cnstrntSite');		   
+var siteInventory		  
+		   = require('./app/models/siteInventory');	
 		   
 app.set('superSecret', config.secret); 
 
@@ -49,28 +48,6 @@ app.use(function (req, res, next) {
     // Pass to next layer of middleware
     next();
 });
-
-/*
-router.post('/setup', function(req, res) {
-  /* create a sample user 
-  var ape = new user({ 
-	userid		:req.body.userid || req.query.userid,
-	password	:req.body.password || req.query.password, 
-    name		:req.body.name || req.query.name,
-	address		:req.body.address || req.query.address,
-	phone		:req.body.phone || req.query.phone,
-	type		:'user'
-  });
-
-  // save the sample user
-  ape.save(function(err) {
-    if (err) throw err;
-    logger.log('User saved successfully');
-    res.json({ success: true });
-  });
-  res.json({ success: true });
-});
-*/
 
 router.post('/authenticate', function(req, res) {
   // find the user
@@ -132,7 +109,6 @@ router.use(function(req, res, next) {
   }
 });
 
-
 router.get('/', function(req, res) {
   res.json({ message: 'Welcome to SmartCom! Please Authenticate to Get Access Token.' });
 });
@@ -148,191 +124,75 @@ router.get('/user', function(req, res) {
   });
 });
 
-router.get('/users', function(req, res) {
-  user.find({}, function(err, users) {
-    res.json({success: true, data: users});
-  });
-}); 
-
-
-router.get('/transportdataset', function(req, res) {
-  trafficData.find({}).sort({month: 1}).exec(function(err, transportdata) {
-    res.json({success: true, data: transportdata});
-  });
-}); 
-
-//View Site Data 
-router.get('/loadapprovedcnstrntsites', function(req, res) {
-  var userId = req.body.userId || req.query.userId;	
-  cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
-	  var sites = [];
-	  validSites.forEach(function(site) {
-		  sites[sites.length] = site.siteId;
-	  });
-	  if(validSites.length > 0)
-	  cnstrntSiteAprvd.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
-		  res.json({success: true, data: siteData});
-	  });
-	  else res.json({success: true, data: []});
+//Inventory Set Up
+router.get('/loaditeminventoryconfig', function(req, res) {
+  inventoryConfig.findOne({configId: "ITEM"},function(err, configData) {
+	res.json({success: true, data: configData});
   });
 });
 
-//Edit Data
+router.post('/saveinventoryconfig', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var configData = req.body.configData || req.query.configData;
+    var configDataJson = JSON.parse(configData); 
+	
+	//Update Config Data
+	inventoryConfig.update({configId: configDataJson.configId}, {
+			items: configDataJson.items, 
+			updatedBy: userId,
+			updateDate: new Date()
+		},function(err) {
+		if (err) {
+			res.json({ success: true, operation: false });
+		} else {
+			logger.log('Config Updated successfully');
+			res.json({ success: true , operation: true});
+		}
+	});
+});
+
 router.get('/loadcnstrntsites', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
+		 console.log("validSites - >" + validSites.length)
 	  var sites = [];
 	  validSites.forEach(function(site) {
 		  sites[sites.length] = site.siteId;
 	  });
 	  if(validSites.length > 0)
-	  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}, {siteId : 1, siteName: 1, projectId: 1, edit: 1, approve: 1}).sort({siteId: 1}).exec(function(err, siteData) {
-		  for(var i=0;i<siteData.length;i++){
-			  siteData[i].edit = false;
-			  for(var j=0;j<validSites.length;j++){
-				  if(siteData[i].siteId == validSites[j].siteId){
-					siteData[i].edit = validSites[j].edit;
-					siteData[i].approve = validSites[j].approve;
-					j = validSites.length;
-				  } 
-			  }
-		  }
-		  res.json({success: true, data: siteData});
-	  });
+		  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
+			  res.json({success: true, data: siteData, permission: validSites});
+		  });
 	  else res.json({success: true, data: []});
   });
-}); 
+});
 
-router.get('/loadcnstrntsite', function(req, res) {
+router.get('/loadsiteinventory', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   var siteId = req.body.siteId || req.query.siteId;	
-  var siteEdit = req.body.siteEdit || req.query.siteEdit;
-  var siteApprove = req.body.siteApprove || req.query.siteApprove;
-  cnstrntSite.findOne({ 'siteId': siteId, 'active': true}).exec(function(err, siteData) {
-	  siteData.edit = siteEdit;
-	  siteData.approve = siteApprove;
-	  if(!err)
-		res.json({success: true, data: siteData});
+  siteInventory.findOne({ 'siteId': siteId }).exec(function(err, inventoryData) {
+	  if(!err){
+		res.json({success: true, data: inventoryData});
+	  }
 	  else res.json({success: true, data: []});
   });
-}); 
+});
 
-router.post('/savesitedata', function(req, res) {
+router.post('/savesiteinventory', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
-    var siteJson = JSON.parse(siteData); 
+    var siteDataJson = JSON.parse(siteData); 
 	
-	//Update Site Data
-	cnstrntSite.update({siteId: siteJson.siteId}, {
-			inventory: siteJson.inventory, 
-			labour: siteJson.labour, 
-			updatedBy: userId,
-			updateDate: new Date(),
-			approvedInventory: siteJson.approvedInventory,
-			approvedLabour: siteJson.approvedLabour
+	//Update Inventory Data
+	siteInventory.update({siteId: siteDataJson.siteId}, {
+			inventory: siteDataJson.inventory
 		},function(err) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-			logger.log('Site Updated successfully');
-			res.json({ success: true , operation: true , siteDetail: siteJson});
+			logger.log('Config Updated successfully');
+			res.json({ success: true , operation: true});
 		}
-	});
-});
-
-router.post('/approvesitedata', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var siteDataType = req.body.siteDataType || req.query.siteDataType;
-	var siteData = req.body.siteData || req.query.siteData;
-    var siteDataJson = JSON.parse(siteData); 
-	//Approve Site Data
-	cnstrntSite.update({siteId: siteDataJson.siteId}, {
-			approvedBy: userId,
-			approvalDate: new Date(),
-			approvedInventory: siteDataType == 'inventory' ? true : siteDataJson.approvedInventory,
-			approvedLabour: siteDataType == 'labour' ? true : siteDataJson.approvedLabour
-		},function(err) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			cnstrntSiteAprvd.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteJson) {
-			    cnstrntSiteAprvd.remove({siteId: siteDataJson.siteId}, function(err, removed) {
-					logger.log('Site Approved data remove - ' + removed);
-					var dataObj = {
-						siteId: siteJson.siteId,
-						projectId: siteJson.projectId, 
-						siteName: siteJson.siteName,
-						address: siteJson.address,
-						edit: false,
-						approve: false,
-						geoTag: siteJson.geoTag,
-						inventory: siteDataType == 'inventory' ? siteDataJson.inventory : siteJson.inventory,
-						labour: siteDataType == 'labour' ? siteDataJson.labour : siteJson.labour,
-						status: siteJson.status,
-						updatedBy: siteDataJson.updatedBy,
-						updateDate: siteDataJson.updateDate,
-						approvedBy: userId,
-						approvalDate: new Date(),
-						approvedInventory: true,
-						approvedLabour: true,	
-						active: siteJson.active
-					};
-				    var freshData = new cnstrntSiteAprvd(dataObj);
-					freshData.save(function(err) {
-						logger.log('Site Approved try - ' + err);
-						if (err) {
-							res.json({ success: true, operation: false });
-						} else {
-							logger.log('Site Approved successfully');
-							res.json({ success: true , operation: true, siteDetail: dataObj});
-						}
-					});
-				});
-			});
-		}
-	});
-});
-
-router.post('/rejectsitedata', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var siteDataType = req.body.siteDataType || req.query.siteDataType;
-	var siteData = req.body.siteData || req.query.siteData;
-    var siteDataJson = JSON.parse(siteData); 
-	cnstrntSiteAprvd.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteJson) {
-		cnstrntSite.remove({siteId: siteDataJson.siteId}, function(err, removed) {
-			logger.log('Data Rject data - ' + siteDataType);
-			var dataObj = {
-				siteId: siteJson.siteId,
-				projectId: siteJson.projectId, 
-				siteName: siteJson.siteName,
-				address: siteJson.address,
-				edit: false,
-				approve: false,
-				geoTag: siteJson.geoTag,
-				inventory: siteDataType == 'inventory' ? siteJson.inventory : siteDataJson.inventory,
-				labour: siteDataType == 'labour' ? siteJson.labour : siteDataJson.labour,
-				status: siteJson.status,
-				updatedBy: siteJson.updatedBy,
-				updateDate: siteJson.updateDate,
-				approvedBy: userId,
-				approvalDate: new Date(),
-				approvedInventory: siteDataType == 'inventory' ? true : siteDataJson.approvedInventory,
-				approvedLabour: siteDataType == 'labour' ? true : siteDataJson.approvedLabour,	
-				active: siteJson.active
-			};
-			logger.log('Data Rject data - ' + JSON.stringify(dataObj));
-			var freshData = new cnstrntSite(dataObj);
-			freshData.save(function(err) {
-				logger.log('Site Approved try - ' + err);
-				if (err) {
-					res.json({ success: true, operation: false });
-				} else {
-					logger.log('Site Approved successfully');
-					res.json({ success: true , operation: true, siteDetail: dataObj});
-				}
-			});			
-		});
-		
 	});
 });
 
