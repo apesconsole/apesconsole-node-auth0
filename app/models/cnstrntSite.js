@@ -4,6 +4,19 @@ var mongoose 		= require('mongoose');
 var connection 		= mongoose.createConnection(config.cnstrntdatabase); 
 var Schema 			= mongoose.Schema;
 
+var taskchema = mongoose.Schema({
+		taskId: String,
+		taskDescription: String, 
+		estimatedDays: Number, 
+		daysRemaining: Number, 
+		taskStatus: String,
+		startDate: Date,
+		createDate: Date,
+		createdBy: String,
+		updateDate: Date,
+		updatedBy: String
+	},{ _id : false });
+
 // set up a mongoose model and pass it using module.exports
 module.exports = connection.model('CONST_SITE', new Schema({ 
 	siteId: String,
@@ -14,6 +27,9 @@ module.exports = connection.model('CONST_SITE', new Schema({
 		lat: String,
 		lonG: String	
 	},
+	taskList: [
+		taskchema
+	],
 	siteManager: {
 		userId: String,
 		contact: String

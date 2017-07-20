@@ -15,6 +15,8 @@ var orderSchema = mongoose.Schema({
 		quantity: Number,	
 		orderStatus: String,
 		approved: Boolean,
+		createDate: Date,
+		createdBy: String,
 		updatedBy: String,
 		updateDate: Date,
 		approvedBy: String,
@@ -44,6 +46,7 @@ var inventorySchema = mongoose.Schema({
 // set up a mongoose model and pass it using module.exports
 module.exports = connection.model('SITE_INVENTORY', new Schema({ 
 	siteId: String,
+	taskId: String,
 	inventory: [
 		inventorySchema
 	],
