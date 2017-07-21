@@ -10,6 +10,10 @@ var orderSchema = mongoose.Schema({
 		vendorName: String,
 		vendorContact: String,
 		vendorAddress: String,
+		currency: String,
+		unitPrice: Number,
+		tax: Number,
+		totalPrice: Number,
 		challan: String,
 		invoice: String,
 		quantity: Number,	
@@ -40,7 +44,11 @@ var inventorySchema = mongoose.Schema({
 		],
 		consumption: [
 			consumptionchema
-		]	
+		],
+		createDate: Date,
+		createdBy: String,
+		updatedBy: String,
+		updateDate: Date,		
 	},{ _id : false });
 
 // set up a mongoose model and pass it using module.exports
@@ -49,6 +57,5 @@ module.exports = connection.model('SITE_INVENTORY', new Schema({
 	taskId: String,
 	inventory: [
 		inventorySchema
-	],
-	active: Boolean
+	]
 }),'SITE_INVENTORY');

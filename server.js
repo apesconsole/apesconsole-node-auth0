@@ -248,8 +248,54 @@ router.post('/savesiteinventory', function(req, res) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-			logger.log('Config Updated successfully');
-			res.json({ success: true , operation: true});
+			logger.log('Inventory Updated successfully');
+			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
+				  var task = null;
+				  for(var i=0; i<data.taskList.length; i++ ){
+					  if(data.taskList[i].taskId == siteDataJson.taskId){
+						task = data.taskList[i];
+						break;
+					  }
+				  }
+				  if(null != task){
+					  var totalCost = task.actualCost;
+					  for(var i=0; i<siteDataJson.inventory.length; i++ ){
+						  var orders = siteDataJson.inventory[i].orders;
+						  for(var j=0; j<orders.length; j++ ){
+							  var order = orders[j];
+							  if(order.approved)
+								totalCost = eval(totalCost + order.totalPrice);
+						  }
+					  }	
+					  siteLabour.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, labourData) {
+						  for(var i=0; i<labourData.labour.length; i++ ){
+							  var bills = labourData.labour[i].billing;
+							  for(var j=0; j<bills.length; j++ ){
+								 var bill = bills[j];
+								 if(bill.approved)
+									totalCost = eval(totalCost + bill.billingAmount);
+							  }
+						  }	
+						  for(var i=0; i<data.taskList.length; i++ ){
+							  if(data.taskList[i].taskId == siteDataJson.taskId){
+								data.taskList[i].actualCost = totalCost;
+								break;
+							  }
+						  }	
+						  console.log('Total : ' + totalCost);
+						  cnstrntSite.update({siteId: siteDataJson.siteId}, {
+								taskList: data.taskList
+							},function(err) {
+								if (err) {
+									res.json({ success: true, operation: false });
+								} else {
+									logger.log('Task Cost Updated successfully');
+									res.json({ success: true , operation: true});			
+								}
+						  });	
+					  });
+				  }
+		    });
 		}
 	});
 });
@@ -270,7 +316,7 @@ router.post('/savesitelabour', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
     var siteDataJson = JSON.parse(siteData); 
-	
+	console.log(siteData);
 	//Update labour Data
 	siteLabour.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
 			labour: siteDataJson.labour
@@ -278,8 +324,54 @@ router.post('/savesitelabour', function(req, res) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-			logger.log('Config Updated successfully');
-			res.json({ success: true , operation: true});
+			logger.log('Labour Updated successfully');
+			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
+				  var task = null;
+				  for(var i=0; i<data.taskList.length; i++ ){
+					  if(data.taskList[i].taskId == siteDataJson.taskId){
+						task = data.taskList[i];
+						break;
+					  }
+				  }
+				  if(null != task){
+					  var totalCost = task.actualCost;
+					  for(var i=0; i<siteDataJson.labour.length; i++ ){
+						  var bills = siteDataJson.labour[i].billing;
+						  for(var j=0; j<bills.length; j++ ){
+							 var bill = bills[j];
+							 if(bill.approved)
+								totalCost = eval(totalCost + bill.billingAmount);
+						  }
+					  }					  
+					  siteInventory.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, inventoryData) {
+						  for(var i=0; i<inventoryData.inventory.length; i++ ){
+							  var orders = inventoryData.inventory[i].orders;
+							  for(var j=0; j<orders.length; j++ ){
+								  var order = orders[j];
+								  if(order.approved)
+									totalCost = eval(totalCost + order.totalPrice);
+							  }
+						  }
+						  for(var i=0; i<data.taskList.length; i++ ){
+							  if(data.taskList[i].taskId == siteDataJson.taskId){
+								data.taskList[i].actualCost = totalCost;
+								break;
+							  }
+						  }	
+					      console.log('Total : ' + totalCost);						  
+						  cnstrntSite.update({siteId: siteDataJson.siteId}, {
+								taskList: data.taskList
+							},function(err) {
+								if (err) {
+									res.json({ success: true, operation: false });
+								} else {
+									logger.log('Task Cost Updated successfully');
+									res.json({ success: true , operation: true});			
+								}
+						  });	
+					  });
+				  }
+		    });
 		}
 	});
 });

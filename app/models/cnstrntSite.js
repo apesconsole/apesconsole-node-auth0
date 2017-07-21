@@ -6,7 +6,10 @@ var Schema 			= mongoose.Schema;
 
 var taskchema = mongoose.Schema({
 		taskId: String,
-		taskDescription: String, 
+		taskDescription: String,
+		currency: String,
+		estimatedCost: Number,
+		actualCost: Number,
 		estimatedDays: Number, 
 		daysRemaining: Number, 
 		taskStatus: String,

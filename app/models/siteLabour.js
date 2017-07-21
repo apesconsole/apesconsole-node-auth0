@@ -4,13 +4,29 @@ var mongoose 		= require('mongoose');
 var connection 		= mongoose.createConnection(config.cnstrntdatabase); 
 var Schema 			= mongoose.Schema;
 
+var billingSchema = mongoose.Schema({
+		billingId: String,
+		billingAmount: Number,
+		invoice: String,
+		createDate: Date,
+		createdBy: String,
+		updatedBy: String,
+		updateDate: Date,
+		approvedBy: String,
+		approvalDate: Date,
+		approved: Boolean
+	},{ _id : false });
+
 var labourSchema = mongoose.Schema({
 		labourId: String,
-		contractor: Date,
+		contractor: String,
 		contractType: String,
 		rate: Number,
 		currency: String,
 		count: Number,
+		billing: [
+			billingSchema
+		],
 		createDate: Date,
 		createdBy: String,
 		updatedBy: String,
