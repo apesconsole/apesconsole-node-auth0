@@ -4,6 +4,13 @@ var mongoose 		= require('mongoose');
 var connection 		= mongoose.createConnection(config.cnstrntdatabase); 
 var Schema 			= mongoose.Schema;
 
+var paymentSchema = mongoose.Schema({
+		paymentId: String,
+		payment: Number,
+		paidBy: String,
+		paymentDate: Date	
+	},{ _id : false });
+
 var orderSchema = mongoose.Schema({
 		orderId: String,
 		orderDate: Date,
@@ -14,10 +21,14 @@ var orderSchema = mongoose.Schema({
 		unitPrice: Number,
 		tax: Number,
 		totalPrice: Number,
+		totalPayment: Number,
 		challan: String,
 		invoice: String,
 		quantity: Number,	
 		orderStatus: String,
+		payments: [
+			paymentSchema
+		],
 		approved: Boolean,
 		createDate: Date,
 		createdBy: String,
@@ -31,6 +42,7 @@ var consumptionchema = mongoose.Schema({
 		item: String,
 		quantity: Number,
 		uom: String,
+		consumptionType: String,
 		consumedBy: String,
 		consumedDate: Date	
 	},{ _id : false });
@@ -39,6 +51,8 @@ var inventorySchema = mongoose.Schema({
 		item: String,
 		quantity: Number,
 		uom: String,
+		totalPrice: Number,
+		totalPayment: Number,		
 		orders: [
 			orderSchema
 		],

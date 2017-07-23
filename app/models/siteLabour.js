@@ -4,9 +4,21 @@ var mongoose 		= require('mongoose');
 var connection 		= mongoose.createConnection(config.cnstrntdatabase); 
 var Schema 			= mongoose.Schema;
 
+
+var paymentSchema = mongoose.Schema({
+		paymentId: String,
+		payment: Number,
+		paidBy: String,
+		paymentDate: Date	
+	},{ _id : false });
+
 var billingSchema = mongoose.Schema({
 		billingId: String,
 		billingAmount: Number,
+		totalPayment: Number,
+		payments: [
+			paymentSchema
+		],
 		invoice: String,
 		createDate: Date,
 		createdBy: String,
@@ -28,6 +40,8 @@ var labourSchema = mongoose.Schema({
 		billing: [
 			billingSchema
 		],
+		totalBill: Number,
+		totalPayment: Number,		
 		createDate: Date,
 		createdBy: String,
 		updatedBy: String,

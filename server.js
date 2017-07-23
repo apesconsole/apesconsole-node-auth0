@@ -150,6 +150,7 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							totalHeldTasks: 0,
 							totalRunningTasks: 0,
 							totalCost: 0,
+							totalPayment: 0,
 							totalEstimatedCost: 0,
 							deviation: 0,
 							savings: 0
@@ -174,20 +175,18 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							if(tsk.taskStatus == 'Started'){
 								st.taskMatrix.totalRunningTasks = eval(st.taskMatrix.totalRunningTasks + 1); 
 							}
-							st.taskMatrix.totalCost = eval(st.taskMatrix.totalCost + tsk.actualCost);
-							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalCost + tsk.estimatedCost);
-							if(tsk.estimatedCost > tsk.actualCost){
-								var difference = eval(tsk.estimatedCost - tsk.actualCost);
-								st.taskMatrix.deviation = eval(st.taskMatrix.deviation + difference);
-							}
-							if(tsk.actualCost > tsk.estimatedCost){
-								var difference = eval(tsk.actualCost - tsk.estimatedCost);
-								st.taskMatrix.savings = eval(st.taskMatrix.savings + difference);
-							}
+							st.taskMatrix.totalCost = eval(st.taskMatrix.totalCost) + eval(tsk.actualCost);
+							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalEstimatedCost) + eval(tsk.estimatedCost);
 						}
+						if(st.taskMatrix.totalEstimatedCost > st.taskMatrix.totalCost){
+							st.taskMatrix.savings = eval(st.taskMatrix.totalEstimatedCost) - eval(st.taskMatrix.totalCost);
+						}
+						if(st.taskMatrix.totalCost > st.taskMatrix.totalEstimatedCost){
+							st.taskMatrix.deviation = eval(st.taskMatrix.totalCost) - eval(st.taskMatrix.totalEstimatedCost);
+						}				
+						st.taskMatrix.totalPayment = eval(tsk.totalPayment);
 						siteMatrix[siteMatrix.length] = st;	
-					}
-								
+					}			
 			  }
 			  res.json({success: true, data: siteMatrix});
 		  });
@@ -308,7 +307,28 @@ router.post('/savesiteinventory', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
     var siteDataJson = JSON.parse(siteData); 
-	
+	console.log('Save step 1');
+	for(var i=0; i<siteDataJson.inventory.length; i++ ){
+		var totalInventoryPayment = 0;
+		var totalInventoryPrice = 0;
+		var orders = siteDataJson.inventory[i].orders;
+		for(var j=0; j<orders.length; j++ ){
+			var order = orders[j];
+			if(order.approved){
+				var totalOrderPayment = 0;
+				for(var k=0; k<order.payments.length; k++ ){
+					var payment = order.payments[k];
+					totalOrderPayment = eval(totalOrderPayment) + eval(payment.payment);
+				}
+				siteDataJson.inventory[i].orders[j].totalPayment = eval(totalOrderPayment);
+				totalInventoryPrice = eval(totalInventoryPrice) + eval(order.totalPrice);
+				totalInventoryPayment = eval(totalInventoryPayment) + eval(totalOrderPayment);				
+			}
+		}
+		siteDataJson.inventory[i].totalPayment = totalInventoryPayment;
+		siteDataJson.inventory[i].totalPrice = totalInventoryPrice;		
+	}	
+	console.log('Save step 1 - Complete');
 	//Update Inventory Data
 	siteInventory.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
 			inventory: siteDataJson.inventory
@@ -318,51 +338,44 @@ router.post('/savesiteinventory', function(req, res) {
 		} else {
 			logger.log('Inventory Updated successfully');
 			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
-				  var task = null;
-				  for(var i=0; i<data.taskList.length; i++ ){
-					  if(data.taskList[i].taskId == siteDataJson.taskId){
-						task = data.taskList[i];
-						break;
-					  }
-				  }
-				  if(null != task){
-					  var totalCost = 0;
-					  for(var i=0; i<siteDataJson.inventory.length; i++ ){
-						  var orders = siteDataJson.inventory[i].orders;
-						  for(var j=0; j<orders.length; j++ ){
-							  var order = orders[j];
-							  if(order.approved)
-								totalCost = eval(totalCost + order.totalPrice);
+				  var totalCost = 0;
+				  var totalPayment = 0;
+				  for(var i=0; i<siteDataJson.inventory.length; i++ ){
+					  var item = siteDataJson.inventory[i];
+					  totalCost = eval(totalCost) + eval(item.totalPrice);
+					  totalPayment = eval(totalPayment + item.totalPayment);
+					  console.log('Inventory Cost: siteDataJson.inventory - i =' + 0 + ', cost=' +  totalCost);
+					  console.log('Inventory totalPayment: siteDataJson.inventory - i =' + 0 + ', cost=' +  totalPayment);
+				  }	
+				  console.log('Inventory Cost: ' +  totalCost);
+				  siteLabour.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, labourData) {
+					  for(var i=0; i<labourData.labour.length; i++ ){
+						  var labour = labourData.labour[i];
+						  totalCost = eval(totalCost) + eval(labour.totalBill);
+						  totalPayment = eval(totalPayment + labour.totalPayment);
+						  console.log('labour totalPayment: labourData.labour - i =' + 0 + ', cost=' +  totalPayment);
+					  }	
+					  console.log('Labour Cost: ' +  totalCost);
+					  console.log('Labour Pay: ' +  totalPayment);
+					  for(var i=0; i<data.taskList.length; i++ ){
+						  if(data.taskList[i].taskId == siteDataJson.taskId){
+							data.taskList[i].actualCost = totalCost;
+							data.taskList[i].totalPayment = totalPayment;
+							break;
 						  }
 					  }	
-					  siteLabour.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, labourData) {
-						  for(var i=0; i<labourData.labour.length; i++ ){
-							  var bills = labourData.labour[i].billing;
-							  for(var j=0; j<bills.length; j++ ){
-								 var bill = bills[j];
-								 if(bill.approved)
-									totalCost = eval(totalCost + bill.billingAmount);
-							  }
-						  }	
-						  for(var i=0; i<data.taskList.length; i++ ){
-							  if(data.taskList[i].taskId == siteDataJson.taskId){
-								data.taskList[i].actualCost = totalCost;
-								break;
-							  }
-						  }	
-						  console.log('Total : ' + totalCost);
-						  cnstrntSite.update({siteId: siteDataJson.siteId}, {
-								taskList: data.taskList
-							},function(err) {
-								if (err) {
-									res.json({ success: true, operation: false });
-								} else {
-									logger.log('Task Cost Updated successfully');
-									res.json({ success: true , operation: true});			
-								}
-						  });	
-					  });
-				  }
+					  console.log('Task Cost: ' +  totalCost);
+					  cnstrntSite.update({siteId: siteDataJson.siteId}, {
+							taskList: data.taskList
+						},function(err) {
+							if (err) {
+								res.json({ success: true, operation: false });
+							} else {
+								logger.log('Task Cost Updated successfully');
+								res.json({ success: true , operation: true});			
+							}
+					  });	
+				  });
 		    });
 		}
 	});
@@ -384,7 +397,28 @@ router.post('/savesitelabour', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
     var siteDataJson = JSON.parse(siteData); 
-	console.log(siteData);
+	console.log('Save step 1');
+	for(var i=0; i<siteDataJson.labour.length; i++ ){
+		var totalLabourPayment = 0;
+		var totalLabourBill = 0;
+		var bills = siteDataJson.labour[i].billing;
+		for(var j=0; j<bills.length; j++ ){
+			var bill = bills[j];
+			if(bill.approved){
+				var totalBillPayment = 0;
+				for(var k=0; k<bill.payments.length; k++ ){
+					var payment = bill.payments[k];
+					totalBillPayment = eval(totalBillPayment) + eval(payment.payment);
+				}
+				siteDataJson.labour[i].billing[j].totalPayment = totalBillPayment;
+				totalLabourBill = eval(totalLabourBill) + eval(bill.billingAmount);
+				totalLabourPayment = eval(totalLabourPayment) + eval(totalBillPayment);
+			}
+		}
+		siteDataJson.labour[i].totalPayment = totalLabourPayment;
+		siteDataJson.labour[i].totalBill = totalLabourBill;
+	}	
+	console.log('Save step 1 - Complete');
 	//Update labour Data
 	siteLabour.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
 			labour: siteDataJson.labour
@@ -394,51 +428,40 @@ router.post('/savesitelabour', function(req, res) {
 		} else {
 			logger.log('Labour Updated successfully');
 			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
-				  var task = null;
-				  for(var i=0; i<data.taskList.length; i++ ){
-					  if(data.taskList[i].taskId == siteDataJson.taskId){
-						task = data.taskList[i];
-						break;
+				  var totalCost = 0;
+				  var totalPayment = 0;
+				  for(var i=0; i<siteDataJson.labour.length; i++ ){
+					  var labour = siteDataJson.labour[i];
+					  totalCost = eval(totalCost + labour.totalBill);
+					  totalPayment = eval(totalPayment + labour.totalPayment);
+				  }		
+					console.log(1);					  
+				  siteInventory.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, inventoryData) {
+					  for(var i=0; i<inventoryData.inventory.length; i++ ){
+						  var item = inventoryData.inventory[i];
+						  totalCost = eval(totalCost + item.totalPrice);
+						  totalPayment = eval(totalPayment + item.totalPayment);
 					  }
-				  }
-				  if(null != task){
-					  var totalCost = 0;
-					  for(var i=0; i<siteDataJson.labour.length; i++ ){
-						  var bills = siteDataJson.labour[i].billing;
-						  for(var j=0; j<bills.length; j++ ){
-							 var bill = bills[j];
-							 if(bill.approved)
-								totalCost = eval(totalCost + bill.billingAmount);
+					  console.log(2);	
+					  for(var i=0; i<data.taskList.length; i++ ){
+						  if(data.taskList[i].taskId == siteDataJson.taskId){
+							data.taskList[i].actualCost = totalCost;
+							data.taskList[i].totalPayment = totalPayment;
+							break;
 						  }
-					  }					  
-					  siteInventory.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, inventoryData) {
-						  for(var i=0; i<inventoryData.inventory.length; i++ ){
-							  var orders = inventoryData.inventory[i].orders;
-							  for(var j=0; j<orders.length; j++ ){
-								  var order = orders[j];
-								  if(order.approved)
-									totalCost = eval(totalCost + order.totalPrice);
-							  }
-						  }
-						  for(var i=0; i<data.taskList.length; i++ ){
-							  if(data.taskList[i].taskId == siteDataJson.taskId){
-								data.taskList[i].actualCost = totalCost;
-								break;
-							  }
-						  }	
-					      console.log('Total : ' + totalCost);						  
-						  cnstrntSite.update({siteId: siteDataJson.siteId}, {
-								taskList: data.taskList
-							},function(err) {
-								if (err) {
-									res.json({ success: true, operation: false });
-								} else {
-									logger.log('Task Cost Updated successfully');
-									res.json({ success: true , operation: true});			
-								}
-						  });	
-					  });
-				  }
+					  }	
+					  console.log('Total : ' + totalCost);						  
+					  cnstrntSite.update({siteId: siteDataJson.siteId}, {
+							taskList: data.taskList
+						},function(err) {
+							if (err) {
+								res.json({ success: true, operation: false });
+							} else {
+								logger.log('Task Cost Updated successfully');
+								res.json({ success: true , operation: true});			
+							}
+					  });	
+				  });
 		    });
 		}
 	});
