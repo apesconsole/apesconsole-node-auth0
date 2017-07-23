@@ -19,6 +19,7 @@ var billingSchema = mongoose.Schema({
 
 var labourSchema = mongoose.Schema({
 		labourId: String,
+		labourDescription: String,
 		contractor: String,
 		contractType: String,
 		rate: Number,

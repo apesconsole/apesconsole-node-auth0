@@ -127,6 +127,74 @@ router.get('/user', function(req, res) {
   });
 });
 
+router.get('/loadconstructionsitematrix', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
+	  var sites = [];
+	  validSites.forEach(function(site) {
+		  sites[sites.length] = site.siteId;
+	  });
+	  if(validSites.length > 0)
+		  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
+			  var siteMatrix = [];
+			  for(var i = 0; i<siteData.length; i++){
+					var st = {
+						projectId: '',
+						siteId:'',
+						siteName:'',
+						address: '',
+						taskMatrix: {
+							currency: 'INR',
+							totalCompletedTasks: 0,
+							totalWaitingTasks: 0,
+							totalHeldTasks: 0,
+							totalRunningTasks: 0,
+							totalCost: 0,
+							totalEstimatedCost: 0,
+							deviation: 0,
+							savings: 0
+						}
+					};
+					if(siteData[i].taskList.length > 0){
+						st.projectId 	= siteData[i].projectId;
+						st.siteId 		= siteData[i].siteId;
+						st.siteName 	= siteData[i].siteName;
+						st.address 		= siteData[i].address;
+						for(var j = 0; j<siteData[i].taskList.length; j++){
+							var tsk = siteData[i].taskList[j];
+							if(tsk.taskStatus == 'Completed'){
+								st.taskMatrix.totalCompletedTasks = eval(st.taskMatrix.totalCompletedTasks + 1); 
+							}
+							if(tsk.taskStatus == 'Waiting'){
+								st.taskMatrix.totalWaitingTasks = eval(st.taskMatrix.totalWaitingTasks + 1); 
+							}
+							if(tsk.taskStatus == 'Hold'){
+								st.taskMatrix.totalHeldTasks = eval(st.taskMatrix.totalHeldTasks + 1); 
+							}
+							if(tsk.taskStatus == 'Started'){
+								st.taskMatrix.totalRunningTasks = eval(st.taskMatrix.totalRunningTasks + 1); 
+							}
+							st.taskMatrix.totalCost = eval(st.taskMatrix.totalCost + tsk.actualCost);
+							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalCost + tsk.estimatedCost);
+							if(tsk.estimatedCost > tsk.actualCost){
+								var difference = eval(tsk.estimatedCost - tsk.actualCost);
+								st.taskMatrix.deviation = eval(st.taskMatrix.deviation + difference);
+							}
+							if(tsk.actualCost > tsk.estimatedCost){
+								var difference = eval(tsk.actualCost - tsk.estimatedCost);
+								st.taskMatrix.savings = eval(st.taskMatrix.savings + difference);
+							}
+						}
+						siteMatrix[siteMatrix.length] = st;	
+					}
+								
+			  }
+			  res.json({success: true, data: siteMatrix});
+		  });
+	  else res.json({success: true, data: []});
+  });
+});
+
 //Set Up Task And Inventory
 router.post('/createtask', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
@@ -258,7 +326,7 @@ router.post('/savesiteinventory', function(req, res) {
 					  }
 				  }
 				  if(null != task){
-					  var totalCost = task.actualCost;
+					  var totalCost = 0;
 					  for(var i=0; i<siteDataJson.inventory.length; i++ ){
 						  var orders = siteDataJson.inventory[i].orders;
 						  for(var j=0; j<orders.length; j++ ){
@@ -334,7 +402,7 @@ router.post('/savesitelabour', function(req, res) {
 					  }
 				  }
 				  if(null != task){
-					  var totalCost = task.actualCost;
+					  var totalCost = 0;
 					  for(var i=0; i<siteDataJson.labour.length; i++ ){
 						  var bills = siteDataJson.labour[i].billing;
 						  for(var j=0; j<bills.length; j++ ){
