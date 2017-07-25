@@ -38,13 +38,12 @@ var orderSchema = mongoose.Schema({
 		approvalDate: Date		
 	},{ _id : false });
 	
-var consumptionchema = mongoose.Schema({
+var consumptionSchema = mongoose.Schema({
 		item: String,
 		quantity: Number,
 		uom: String,
-		consumptionType: String,
 		consumedBy: String,
-		consumedDate: Date	
+		consumedDate: Date
 	},{ _id : false });
 	
 var inventorySchema = mongoose.Schema({
@@ -55,9 +54,9 @@ var inventorySchema = mongoose.Schema({
 		totalPayment: Number,		
 		orders: [
 			orderSchema
-		],
+		],		
 		consumption: [
-			consumptionchema
+			consumptionSchema
 		],
 		createDate: Date,
 		createdBy: String,

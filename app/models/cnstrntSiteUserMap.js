@@ -9,5 +9,7 @@ module.exports = connection.model('SITE_USER_MAP', new Schema({
 	userId: String,
 	siteId: String,
     edit: Boolean,
+	viewFinance: Boolean,
+	export: Boolean,
 	approve: Boolean
 }),'SITE_USER_MAP');

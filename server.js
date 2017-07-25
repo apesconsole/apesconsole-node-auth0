@@ -18,14 +18,15 @@ var user   = require('./app/models/user'); // get our mongoose model
 var menu   = require('./app/models/menu');
 
 var cnstrntSiteUserMap
-		   = require('./app/models/cnstrntSiteUserMap');       
+		   = require('./app/models/cnstrntSiteUserMap');      
+var globalInventory
+		   = require('./app/models/globalInventory');
 var inventoryConfig
 		   = require('./app/models/inventoryConfig');
 var cnstrntSite
 		   = require('./app/models/cnstrntSite');		   
 var siteInventory		  
-		   = require('./app/models/siteInventory');	
-		   
+		   = require('./app/models/siteInventory');	  
 var siteLabour		  
 		   = require('./app/models/siteLabour');			   
 		   
@@ -138,11 +139,19 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 		  cnstrntSite.find({ 'siteId': { $in: sites }, 'active': true}).sort({siteId: 1}).exec(function(err, siteData) {
 			  var siteMatrix = [];
 			  for(var i = 0; i<siteData.length; i++){
+					var canViewFinance = false;
+					for(var j = 0; j<validSites.length; j++){
+						if(siteData[i].siteId == validSites[j].siteId){
+							canViewFinance = validSites[j].viewFinance;
+							break;
+						}
+					}
 					var st = {
 						projectId: '',
 						siteId:'',
 						siteName:'',
 						address: '',
+						canViewFinance: canViewFinance,
 						taskMatrix: {
 							currency: 'INR',
 							totalCompletedTasks: 0,
@@ -163,7 +172,7 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 						st.address 		= siteData[i].address;
 						for(var j = 0; j<siteData[i].taskList.length; j++){
 							var tsk = siteData[i].taskList[j];
-							if(tsk.taskStatus == 'Completed'){
+							if(tsk.taskStatus == 'Complete'){
 								st.taskMatrix.totalCompletedTasks = eval(st.taskMatrix.totalCompletedTasks + 1); 
 							}
 							if(tsk.taskStatus == 'Waiting'){
@@ -177,6 +186,7 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							}
 							st.taskMatrix.totalCost = eval(st.taskMatrix.totalCost) + eval(tsk.actualCost);
 							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalEstimatedCost) + eval(tsk.estimatedCost);
+							st.taskMatrix.totalPayment = eval(st.taskMatrix.totalPayment) + eval(tsk.totalPayment);							
 						}
 						if(st.taskMatrix.totalEstimatedCost > st.taskMatrix.totalCost){
 							st.taskMatrix.savings = eval(st.taskMatrix.totalEstimatedCost) - eval(st.taskMatrix.totalCost);
@@ -184,7 +194,6 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 						if(st.taskMatrix.totalCost > st.taskMatrix.totalEstimatedCost){
 							st.taskMatrix.deviation = eval(st.taskMatrix.totalCost) - eval(st.taskMatrix.totalEstimatedCost);
 						}				
-						st.taskMatrix.totalPayment = eval(tsk.totalPayment);
 						siteMatrix[siteMatrix.length] = st;	
 					}			
 			  }
@@ -234,7 +243,9 @@ router.post('/createtask', function(req, res) {
 router.post('/edittask', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
+	var taskDetails = req.body.taskDetails || req.query.taskDetails;
     var siteDataJson = JSON.parse(siteData); 
+	var taskDetailsJson = JSON.parse(taskDetails);
 	
 	cnstrntSite.update({siteId: siteDataJson.siteId}, {
 			taskList: siteDataJson.taskList
@@ -243,15 +254,202 @@ router.post('/edittask', function(req, res) {
 			res.json({ success: true, operation: false });
 		} else {
 			logger.log('Site Updated successfully');
-			res.json({ success: true , operation: true});			
+			if(taskDetailsJson.taskStatus == 'Complete'){
+				siteInventory.findOne({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}).exec(function(err, inventoryData) {
+					if(!err){
+						var inventory = inventoryData.inventory;
+						globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
+							if(!err){
+								var items = [];
+								for(var i = 0; i<inventory.length; i++){
+									var found = false;
+									for(var j = 0; j<globalData.items.length; j++){
+										if(inventory[i].item == globalData.items[j].item){
+											 found = true;
+											 logger.log('Found - Adding Qauntity - ' + globalData.items[j]);
+											 globalData.items[j].quantity = eval(globalData.items[j]) + eval(inventory[i].quantity);
+											 items[items.length] = {
+												item: globalData.items[j].item,
+												uom: globalData.items[j].uom,
+												quantity: globalData.items[j].quantity
+											 };
+											 break;
+										}
+									}
+									if(!found){
+										logger.log('Not Found Adding new - ' + inventory[i]);
+										items[items.length] = {
+											item: inventory[i].item,
+											uom: inventory[i].uom,
+											quantity: inventory[i].quantity
+										};
+									}
+									inventory[i].quantity = 0;
+									//Reject All Pending Requests for Items in Task Inventory
+									for(var j = 0; j<globalData.requests.length; j++){
+										if(inventory[i].item == globalData.requests[j].item && taskDetailsJson.taskId == globalData.requests[j].taskId){
+											if(!globalData.requests[j].approved && !globalData.requests[j].rejected){
+												globalData.requests[j].rejected = true;
+												globalData.requests[j].rejectedBy = 'System';
+												globalData.requests[j].rejectionDate = new Date();
+											}
+										}
+									}
+								}
+								logger.log('items List - ' + items.length);
+								//Update Config Data
+								globalInventory.update({configId: 'ITEM'}, {
+										items: items,
+										requests: globalData.requests,
+										updatedBy: userId,
+										updateDate: new Date()
+									},function(err) {
+									if (err) {
+										res.json({ success: true, operation: false });
+									} else {
+										logger.log('Global Data Updated Successfully');
+										siteInventory.update({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}, {
+												inventory: inventory, 
+											},function(err) {
+											if (err) {
+												res.json({ success: true, operation: false });
+											} else {
+												logger.log('Site Data Updated Successfully');
+												res.json({ success: true, operation: true });
+											}
+										});
+									}
+								});	
+							}
+						});
+					}
+					else res.json({ success: true , operation: false});
+				});
+			}
+			else {
+				res.json({ success: true , operation: true});	
+			}				
 		}
 	});	
 });	
 	
 //Inventory Set Up
+router.get('/loadglobaliteminventoryconfig', function(req, res) {
+  globalInventory.findOne({configId: "ITEM"},function(err, configData) {
+	res.json({success: true, data: configData});
+  });
+});
+
+router.post('/saveglobalinventoryrequests', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var configData = req.body.configData || req.query.configData;
+    var configDataJson = JSON.parse(configData); 
+	//Update Config Data
+	globalInventory.update({configId: 'ITEM'}, {
+			requests: configDataJson.requests,
+			updatedBy: userId,
+			updateDate: new Date()
+		},function(err) {
+		if (err) {
+			res.json({ success: true, operation: false });
+		} else {
+			logger.log('Global Config Updated successfully');
+			res.json({ success: true , operation: true});
+		}
+	});
+});
+
+router.post('/approveglobalinventoryrequest', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteData = req.body.siteData || req.query.siteData;
+	var requestId = req.body.requestId || req.query.requestId;
+	var selectedItem = req.body.selectedItem || req.query.selectedItem;
+    var siteDataJson = JSON.parse(siteData);
+	
+	//Update Config Data
+	globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
+		if(!err){
+			console.log(1);
+			var found = false;
+			var availableQuantity = 0;
+			for(var i = 0; i<globalData.items.length; i++ ){
+				if(globalData.items[i].item == selectedItem){
+					found = true;
+					availableQuantity = globalData.items[i].quantity;
+					break;
+				}
+			}
+			console.log(2);
+			if(found){
+				console.log(3);
+				var response = {};
+				for(var i = 0; i<globalData.requests.length; i++ ){
+					if(globalData.requests[i].requestId == requestId && globalData.requests[i].siteId == siteDataJson.siteId && globalData.requests[i].taskId == siteDataJson.taskId){
+					   if(!globalData.requests[i].rejected && !globalData.requests[i].approved && availableQuantity < globalData.requests[i].quantity){
+							globalData.requests[i].rejected = true;
+							globalData.requests[i].rejectedBy = 'System';
+							globalData.requests[i].rejectionDate = new Date();
+							response['status'] = 'Request Rejected! Not Enough Quntity';
+					   } else if(!globalData.requests[i].rejected && !globalData.requests[i].approved && availableQuantity >= globalData.requests[i].quantity){
+							globalData.requests[i].approved = true;
+							globalData.requests[i].approvedBy = userId;
+							globalData.requests[i].approvalDate = new Date();
+							response['status'] = 'Request Approved!';
+							
+							//Global Inventory Reduced
+							for(var j = 0; j<globalData.items.length; j++ ){
+								if(globalData.items[j].item == selectedItem){
+									console.log('globalData.items[j].quantity = ' + globalData.items[j].quantity);
+									globalData.items[j].quantity = eval(globalData.items[j].quantity) - eval(globalData.requests[i].quantity);
+									console.log('After Update quantity = ' + globalData.items[j].quantity);
+									break;
+								}
+							}
+							
+							//Task Inventory Increased
+							for(var j = 0; j<siteDataJson.inventory.length; j++ ){
+								if(siteDataJson.inventory[j].item = selectedItem){
+									console.log('siteDataJson.inventory[j].quantity = ' + siteDataJson.inventory[j].quantity);
+									siteDataJson.inventory[j].quantity = eval(siteDataJson.inventory[j].quantity) + eval(globalData.requests[i].quantity);
+									console.log('After Update quantity = ' + siteDataJson.inventory[j].quantity);
+									break;
+								}
+							}
+					   }
+					   console.log(response['status']);
+					   break;
+					}
+				}
+			}
+			globalInventory.update({configId: 'ITEM'}, {
+					items: globalData.items,
+					requests: globalData.requests,
+					updatedBy: userId,
+					updateDate: new Date()
+				},function(err) {
+				if (err) {
+					res.json({ success: true, operation: false});
+				} else {
+					logger.log('Config Updated successfully');
+					siteInventory.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
+							inventory: siteDataJson.inventory
+						},function(err) {
+							if(!err){
+								logger.log('Site Data Updated successfully');
+								res.json({ success: true , operation: true, response: response});
+							} else res.json({ success: true, operation: false });
+						});
+				}
+			});
+		} else res.json({ success: true, operation: false });
+	});
+});
+
 router.get('/loaditeminventoryconfig', function(req, res) {
   inventoryConfig.findOne({configId: "ITEM"},function(err, configData) {
-	res.json({success: true, data: configData});
+	  if(!err){
+		res.json({success: true, data: configData});
+	  } else res.json({success: true, data: []});
   });
 });
 
@@ -372,7 +570,38 @@ router.post('/savesiteinventory', function(req, res) {
 								res.json({ success: true, operation: false });
 							} else {
 								logger.log('Task Cost Updated successfully');
-								res.json({ success: true , operation: true});			
+								inventoryConfig.findOne({configId: "ITEM"},function(err, configData) {
+									if(!err){
+										var lockItem = false;
+										for(var i=0; i<siteDataJson.inventory.length; i++ ){
+											for(var j=0; j<configData.items.length; j++ ){
+												console.log('configData.items[j].canDelete = ' + configData.items[j].canDelete);
+												if(configData.items[j].canDelete && siteDataJson.inventory[i].item == configData.items[j].item){
+													configData.items[j].canDelete = false;
+													lockItem = true;
+													break;
+												}
+											}
+											if(lockItem) break;
+										}
+										if(lockItem){
+											inventoryConfig.update({configId: 'ITEM'}, {
+													items: configData.items, 
+													updatedBy: 'System',
+													updateDate: new Date()
+												},function(err) {
+												if (err) {
+													res.json({ success: true, operation: false });
+												} else {
+													logger.log('Config Locked successfully');
+													res.json({ success: true , operation: true});
+												}
+											});
+										} else {
+											res.json({ success: true , operation: true});
+										}											
+									} else res.json({success: true, data: []});
+								});								
 							}
 					  });	
 				  });
