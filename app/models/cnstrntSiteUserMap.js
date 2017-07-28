@@ -11,5 +11,25 @@ module.exports = connection.model('SITE_USER_MAP', new Schema({
     edit: Boolean,
 	viewFinance: Boolean,
 	export: Boolean,
-	approve: Boolean
+	approve: Boolean,
+    createOrder: Boolean,
+    createBill: Boolean,	
+	pay: Boolean,
+	notification: {
+		active: Boolean,
+        task_add_info: Boolean,
+        task_edit_info: Boolean,
+        task_inventory_approval_info: Boolean,
+        task_inventory_edit_info: Boolean,
+        task_inventory_order_approval_info: Boolean,
+        task_inventory_order_complete_info: Boolean,
+        task_inventory_order_payment_info: Boolean,
+        task_labour_approval_request: Boolean,
+        task_labour_approval_info: Boolean,
+        task_labour_edit_info: Boolean,
+        task_labour_bill_create_info: Boolean,
+        task_labour_bill_approval_request: Boolean,
+        task_labour_bill_approval_info: Boolean,
+        task_labour_bill_payment_info: Boolean
+	}
 }),'SITE_USER_MAP');

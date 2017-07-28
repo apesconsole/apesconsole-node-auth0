@@ -25,6 +25,7 @@ var orderSchema = mongoose.Schema({
 		challan: String,
 		invoice: String,
 		quantity: Number,	
+		estimatedDeliveryDays: Number,
 		orderStatus: String,
 		payments: [
 			paymentSchema
@@ -45,6 +46,32 @@ var consumptionSchema = mongoose.Schema({
 		consumedBy: String,
 		consumedDate: Date
 	},{ _id : false });
+
+	
+var globalRequestSchema = mongoose.Schema({
+		requestId: String,
+		requestStatus: String,
+		transfer: Boolean,
+		transferOrder: {
+			transferOrderId: String,
+			shippingVendor: String,
+			estimatedDeliveryDays: Number,
+			shippingId: String,
+			shippingCost: Number,
+			shippingType: String,
+			trackingId: String,
+			currency: String,
+			payment: Number
+		},
+		requestedBy: String,
+		requestDate: Date,
+		rejected: Boolean,
+		rejectedBy: String,
+		rejectionDate: Date,
+		approved: Boolean,
+		approvedBy: String,
+		approvalDate: Date		
+	},{ _id : false });	
 	
 var inventorySchema = mongoose.Schema({
 		item: String,
@@ -54,7 +81,10 @@ var inventorySchema = mongoose.Schema({
 		totalPayment: Number,		
 		orders: [
 			orderSchema
-		],		
+		],
+		requests: [ 
+			globalRequestSchema
+		],
 		consumption: [
 			consumptionSchema
 		],

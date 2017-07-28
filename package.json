@@ -5,6 +5,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "latest"
+    "express": "latest",
+    "sendgrid": "^5.2.0"
   }
 }

@@ -11,6 +11,8 @@ var app = Express();
 var http = require('http').Server(app);
 var router = Express.Router();
 
+var emailHelper = require('sendgrid').mail;
+
 var logger = require("logging_component");
 var jwt    = require('jsonwebtoken'); // used to create, sign, and verify tokens
 var config = require('./config'); // get our config file
@@ -113,13 +115,80 @@ router.use(function(req, res, next) {
   }
 });
 
+var emailService = function(emailContainer, callBack){
+	var sg = require('sendgrid')(config.email_api_key);
+	var request = sg.emptyRequest({
+	  method: 'POST',
+	  path: '/v3/mail/send',
+	  body: {
+		personalizations: [
+		  {
+			to: emailContainer.toIdList,
+			subject: emailContainer.subject
+		  }
+		],
+		from: {
+		  email: 'smartcomAdministration@smartcom.com'
+		},
+		content: [
+		  {
+			type: 'text/plain',
+			value: emailContainer.content
+		  }
+		]
+	 }
+	});	
+	sg.API(request, function (error, response) {
+		  console.log(response.statusCode);
+		  console.log(response.body);
+		  console.log(response.headers);		
+		  if (error) {
+			  callBack.failure();
+		  } else {
+			callBack.success(response);
+		  }
+	});	
+}
+
+var emailHandler = function(emailContainer, callBack){
+  cnstrntSiteUserMap.find({'siteId': emailContainer.siteId}).exec(function(err, validUsers) {
+		for(var i = 0; i<validUsers.length; i++){
+			if(validUsers[i].notification.active && validUsers[i].notification[emailContainer.notificationKey]){
+				emailContainer.toIdList[emailContainer.toIdList.length] = validUsers[i].userId;
+			}
+		}
+		if(emailContainer.toIdList.length > 0){
+			user.find({'userId': { $in: emailContainer.toIdList }}, ['emailId']).exec(function(err, validEmailId) {
+				//UserId - > EmailId Transformation
+				emailContainer.toIdList = [];
+				for(var i = 0; i<validEmailId.length; i++){
+					console.log(validUsers[i].notification[emailContainer.notificationKey])
+					if(validUsers[i].notification.active && validUsers[i].notification[emailContainer.notificationKey]){
+						emailContainer.toIdList[emailContainer.toIdList.length] = {
+							email: validEmailId[i].emailId,
+						  };
+					}
+				}
+				if(emailContainer.toIdList.length > 0){
+					emailService(emailContainer, {
+						success: function(r){
+							callBack.success(r);
+						}, failure: function(){
+							callBack.failure();
+						}
+					});
+				} else callBack.failure();
+			});
+		} else callBack.failure();
+  });
+}
+
 router.get('/', function(req, res) {
   res.json({ message: 'Welcome to SmartCom! Please Authenticate to Get Access Token.' });
 });
 
 router.get('/user', function(req, res) {
   var userId = req.body.userId || req.query.userId;
-  console.log('looking for ->' + userId)
   user.findOne({'userId': userId}, function(err, userData) {
 	userData.password = null;
 	menu.find({'userId': userId }, function(err, menuList) {
@@ -207,6 +276,7 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 router.post('/createtask', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var siteData = req.body.siteData || req.query.siteData;
+	var notificationData = req.body.notificationData || req.query.notificationData;
 	var taskInventory = req.body.taskInventory || req.query.taskInventory;
 	var taskLabour = req.body.taskLabour || req.query.taskLabour;
     var siteDataJson = JSON.parse(siteData); 
@@ -214,6 +284,8 @@ router.post('/createtask', function(req, res) {
 	var taskLabourJson = JSON.parse(taskLabour); 
 	var newInventory = new siteInventory(taskInventoryJson);
 	var newLabour = new siteLabour(taskLabourJson);
+	
+	var notificationDataJson = JSON.parse(notificationData);
 	
 	cnstrntSite.update({siteId: siteDataJson.siteId}, {
 			taskList: siteDataJson.taskList
@@ -231,7 +303,23 @@ router.post('/createtask', function(req, res) {
 							res.json({ success: true, operation: false });
 						} else {
 							logger.log('Task saved successfully');
-							res.json({ success: true , operation: true});
+							emailHandler({
+							//Container
+								siteId: siteDataJson.siteId,
+								notificationKey: notificationDataJson.key,
+								subject: notificationDataJson.subject,
+								content: notificationDataJson.message,
+								toIdList: []
+							},{
+								//Call Back
+								success: function(r){
+									logger.log('Email Sent Successfully');
+									res.json({ success: true, operation: true });
+								}, failure: function(){
+									logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+									res.json({ success: true , operation: true});
+								}
+							});
 						}
 					});	
 				}
@@ -239,98 +327,156 @@ router.post('/createtask', function(req, res) {
 		}
 	});	
 });	
-	
+
 router.post('/edittask', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
+	var notificationData = req.body.notificationData || req.query.notificationData;
 	var siteData = req.body.siteData || req.query.siteData;
 	var taskDetails = req.body.taskDetails || req.query.taskDetails;
     var siteDataJson = JSON.parse(siteData); 
 	var taskDetailsJson = JSON.parse(taskDetails);
 	
-	cnstrntSite.update({siteId: siteDataJson.siteId}, {
-			taskList: siteDataJson.taskList
-		},function(err) {
+	var notificationDataJson = JSON.parse(notificationData);
+	
+	cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteTaskData) {
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
-			logger.log('Site Updated successfully');
-			if(taskDetailsJson.taskStatus == 'Complete'){
-				siteInventory.findOne({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}).exec(function(err, inventoryData) {
-					if(!err){
-						var inventory = inventoryData.inventory;
-						globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
-							if(!err){
-								var items = [];
-								for(var i = 0; i<inventory.length; i++){
-									var found = false;
-									for(var j = 0; j<globalData.items.length; j++){
-										if(inventory[i].item == globalData.items[j].item){
-											 found = true;
-											 logger.log('Found - Adding Qauntity - ' + globalData.items[j]);
-											 globalData.items[j].quantity = eval(globalData.items[j]) + eval(inventory[i].quantity);
-											 items[items.length] = {
-												item: globalData.items[j].item,
-												uom: globalData.items[j].uom,
-												quantity: globalData.items[j].quantity
-											 };
-											 break;
+			siteDataJson.taskList = siteTaskData.taskList;
+			for(var i=0; i<siteDataJson.taskList.length; i++){
+				if(siteDataJson.taskList[i].taskId == taskDetailsJson.taskId){
+					if(siteDataJson.taskList[i].taskStatus != 'Complete'){
+						//Update Target Task Only
+						siteDataJson.taskList[i].taskStatus = taskDetailsJson.taskStatus;
+						siteDataJson.taskList[i].taskDescription = taskDetailsJson.taskDescription;
+						siteDataJson.taskList[i].estimatedCost = taskDetailsJson.estimatedCost;
+						cnstrntSite.update({siteId: siteDataJson.siteId}, {
+								taskList: siteDataJson.taskList
+							},function(err) {
+							if (err) {
+								res.json({ success: true, operation: false });
+							} else {
+								logger.log('Site Updated successfully');
+								if(taskDetailsJson.taskStatus == 'Complete'){
+									siteInventory.findOne({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}).exec(function(err, inventoryData) {
+										if(!err){
+											var inventory = inventoryData.inventory;
+											globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
+												if(!err){
+													var newRequestList = [];
+													for(var i = 0; i<inventory.length; i++){
+														if(inventory[i].quantity > 0){
+															var found = false;
+															for(var j = 0; j<globalData.items.length; j++){
+																//Save Global Items in their own Site Locations
+																if(inventory[i].item == globalData.items[j].item && 
+																   siteDataJson.siteId == globalData.items[j].currentLocation){
+																	 globalData.items[j].quantity = eval(globalData.items[j].quantity) + eval(inventory[i].quantity);
+																	 found = true;
+																} 
+															}
+															if(!found){
+																globalData.items[globalData.items.length] = {
+																	item: inventory[i].item,
+																	uom: inventory[i].uom,
+																	quantity: inventory[i].quantity,
+																	currentLocation: siteDataJson.siteId
+																};
+															}
+															inventory[i].quantity = 0;
+														}
+														//Reject All Pending Requests for Items in Task Inventory
+														if(inventory[i].requests.length == 0){
+															newRequestList = globalData.requests;
+														} else {
+															for(var j = 0; j<inventory[i].requests.length; j++){
+																inventory[i].requests[j].rejected = true;
+																inventory[i].requests[j].rejectedBy = 'System';
+																inventory[i].requests[j].rejectionDate = new Date();
+																for(var k = 0; k<globalData.requests.length; k++){
+																	//Remove All Rejected Requests for a Completed Task
+																	if(inventory[i].requests[j].requestId != globalData.requests[k].requestId){
+																		newRequestList[newRequestList.length] = globalData.requests[k];
+																	}
+																}
+															}
+														}
+													}
+													//Update Config Data
+													globalInventory.update({configId: 'ITEM'}, {
+															items: globalData.items,
+															requests: newRequestList,
+															updatedBy: userId,
+															updateDate: new Date()
+														},function(err) {
+														if (err) {
+															res.json({ success: true, operation: false });
+														} else {
+															logger.log('Global Data Updated Successfully');
+															siteInventory.update({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}, {
+																	inventory: inventory, 
+																},function(err) {
+																if (err) {
+																	res.json({ success: true, operation: false });
+																} else {
+																	logger.log('Site Data Updated Successfully');
+																	emailHandler({
+																	//Container
+																		siteId: siteDataJson.siteId,
+																		notificationKey: notificationDataJson.key,
+																		subject: notificationDataJson.subject,
+																		content: notificationDataJson.message,
+																		toIdList: []
+																	},{
+																		//Call Back
+																		success: function(r){
+																			logger.log('Email Sent Successfully');
+																			res.json({ success: true, operation: true });
+																		}, failure: function(){
+																			logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+																			res.json({ success: true , operation: true});
+																		}
+																	});
+																}
+															});
+														}
+													});	
+												}
+											});
 										}
-									}
-									if(!found){
-										logger.log('Not Found Adding new - ' + inventory[i]);
-										items[items.length] = {
-											item: inventory[i].item,
-											uom: inventory[i].uom,
-											quantity: inventory[i].quantity
-										};
-									}
-									inventory[i].quantity = 0;
-									//Reject All Pending Requests for Items in Task Inventory
-									for(var j = 0; j<globalData.requests.length; j++){
-										if(inventory[i].item == globalData.requests[j].item && taskDetailsJson.taskId == globalData.requests[j].taskId){
-											if(!globalData.requests[j].approved && !globalData.requests[j].rejected){
-												globalData.requests[j].rejected = true;
-												globalData.requests[j].rejectedBy = 'System';
-												globalData.requests[j].rejectionDate = new Date();
-											}
-										}
-									}
+										else res.json({ success: true , operation: false});
+									});
 								}
-								logger.log('items List - ' + items.length);
-								//Update Config Data
-								globalInventory.update({configId: 'ITEM'}, {
-										items: items,
-										requests: globalData.requests,
-										updatedBy: userId,
-										updateDate: new Date()
-									},function(err) {
-									if (err) {
-										res.json({ success: true, operation: false });
-									} else {
-										logger.log('Global Data Updated Successfully');
-										siteInventory.update({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}, {
-												inventory: inventory, 
-											},function(err) {
-											if (err) {
-												res.json({ success: true, operation: false });
-											} else {
-												logger.log('Site Data Updated Successfully');
-												res.json({ success: true, operation: true });
-											}
-										});
-									}
-								});	
+								else {
+									emailHandler({
+									//Container
+										siteId: siteDataJson.siteId,
+										notificationKey: notificationData.key,
+										subject: notificationData.subject,
+										content: notificationData.message,
+										toIdList: []
+									},{
+										//Call Back
+										success: function(r){
+											logger.log('Email Sent Successfully');
+											res.json({ success: true, operation: true });
+										}, failure: function(){
+											logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+											res.json({ success: true , operation: true});
+										}
+									});	
+								}				
 							}
-						});
+						});							
+					} else {
+						//Already Completed Flow
+						res.json({ success: true , operation: true});
 					}
-					else res.json({ success: true , operation: false});
-				});
+				}
 			}
-			else {
-				res.json({ success: true , operation: true});	
-			}				
+		
 		}
-	});	
+	});
 });	
 	
 //Inventory Set Up
@@ -356,6 +502,63 @@ router.post('/saveglobalinventoryrequests', function(req, res) {
 			logger.log('Global Config Updated successfully');
 			res.json({ success: true , operation: true});
 		}
+	});
+});
+
+
+router.post('/rejectglobalinventoryrequests', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var rejectedRequest = req.body.rejectedRequest || req.query.rejectedRequest;
+	var globalData = req.body.globalData || req.query.globalData;
+	var globalDataJson = JSON.parse(globalData); 
+    var rejectedRequestJson = JSON.parse(rejectedRequest); 
+	
+	var newRequestList = []
+	for(var i = 0; i<globalDataJson.requests.length; i++){
+		//Remove from Global Data Set
+		if(globalDataJson.requests[i].requestId != rejectedRequestJson.requestId){
+			newRequestList[newRequestList.length] = globalDataJson.requests[i];
+		}
+	}
+	
+	siteInventory.findOne({ 'siteId': rejectedRequestJson.siteId, 'taskId': rejectedRequestJson.taskId }).exec(function(err, inventoryData) {
+		  if(!err){
+				for(var i = 0; i<inventoryData.inventory.length; i++){
+					if(inventoryData.inventory[i].item != rejectedRequestJson.item){
+						var requests = inventoryData.inventory[i].requests;
+						for(var j = 0; j<requests.length; j++){
+							//Reject Task Data Set
+							if(requests[j].requestId != rejectedRequestJson.requestId){
+								requests[j].rejected = true;
+								requests[j].rejectedBy = userId;
+								requests[j].rejectionDate = new Date();
+								break;
+							}
+						}
+					}
+				}
+
+				globalInventory.update({configId: 'ITEM'}, {
+						requests: newRequestList,
+						updatedBy: userId,
+						updateDate: new Date()
+					},function(err) {
+					if (err) {
+						res.json({ success: true, operation: false });
+					} else {
+						logger.log('Global Config Updated successfully');
+						siteInventory.update({siteId: rejectedRequestJson.siteId, taskId: rejectedRequestJson.taskId}, {
+								requests: inventoryData.inventory
+							},function(err) {
+								if(!err){
+									logger.log('Site Data Updated successfully');
+									res.json({ success: true , operation: true, response: response});
+								} else res.json({ success: true, operation: false });
+							});
+					}
+				});
+		  }
+		  else res.json({ success: true, operation: false });
 	});
 });
 
@@ -503,9 +706,12 @@ router.get('/loadsiteinventory', function(req, res) {
 
 router.post('/savesiteinventory', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
+	var notificationData = req.body.notificationData || req.query.notificationData;
 	var siteData = req.body.siteData || req.query.siteData;
     var siteDataJson = JSON.parse(siteData); 
-	console.log('Save step 1');
+	
+	var notificationDataJson = JSON.parse(notificationData);
+	
 	for(var i=0; i<siteDataJson.inventory.length; i++ ){
 		var totalInventoryPayment = 0;
 		var totalInventoryPrice = 0;
@@ -569,7 +775,7 @@ router.post('/savesiteinventory', function(req, res) {
 							if (err) {
 								res.json({ success: true, operation: false });
 							} else {
-								logger.log('Task Cost Updated successfully');
+								logger.log('Task Cost Updated successfully');									
 								inventoryConfig.findOne({configId: "ITEM"},function(err, configData) {
 									if(!err){
 										var lockItem = false;
@@ -594,11 +800,44 @@ router.post('/savesiteinventory', function(req, res) {
 													res.json({ success: true, operation: false });
 												} else {
 													logger.log('Config Locked successfully');
-													res.json({ success: true , operation: true});
+													emailHandler({
+													//Container
+														siteId: siteDataJson.siteId,
+														notificationKey: notificationDataJson.key,
+														subject: notificationDataJson.subject,
+														content: notificationDataJson.message,
+														toIdList: []
+													},{
+														//Call Back
+														success: function(r){
+															logger.log('Email Sent Successfully');
+															res.json({ success: true, operation: true });
+														}, failure: function(){
+															logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+															res.json({ success: true , operation: true});
+														}
+													});
 												}
 											});
 										} else {
-											res.json({ success: true , operation: true});
+
+											emailHandler({
+											//Container
+												siteId: siteDataJson.siteId,
+												notificationKey: notificationDataJson.key,
+												subject: notificationDataJson.subject,
+												content: notificationDataJson.message,
+												toIdList: []
+											},{
+												//Call Back
+												success: function(r){
+													logger.log('Email Sent Successfully');
+													res.json({ success: true, operation: true });
+												}, failure: function(){
+													logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+													res.json({ success: true , operation: true});
+												}
+											});
 										}											
 									} else res.json({success: true, data: []});
 								});								
@@ -624,9 +863,12 @@ router.get('/loadsitelabour', function(req, res) {
 
 router.post('/savesitelabour', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
+	var notificationData = req.body.notificationData || req.query.notificationData;
 	var siteData = req.body.siteData || req.query.siteData;
     var siteDataJson = JSON.parse(siteData); 
-	console.log('Save step 1');
+	
+	var notificationDataJson = JSON.parse(notificationData);
+	
 	for(var i=0; i<siteDataJson.labour.length; i++ ){
 		var totalLabourPayment = 0;
 		var totalLabourBill = 0;
@@ -687,7 +929,23 @@ router.post('/savesitelabour', function(req, res) {
 								res.json({ success: true, operation: false });
 							} else {
 								logger.log('Task Cost Updated successfully');
-								res.json({ success: true , operation: true});			
+								emailHandler({
+								//Container
+									siteId: siteDataJson.siteId,
+									notificationKey: notificationDataJson.key,
+									subject: notificationDataJson.subject,
+									content: notificationDataJson.message,
+									toIdList: []
+								},{
+									//Call Back
+									success: function(r){
+										logger.log('Email Sent Successfully');
+										res.json({ success: true, operation: true });
+									}, failure: function(){
+										logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+										res.json({ success: true , operation: true});
+									}
+								});		
 							}
 					  });	
 				  });

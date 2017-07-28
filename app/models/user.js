@@ -9,6 +9,7 @@ module.exports = connection.model('USERS', new Schema({
 	userId: String,
 	password: String, 
     name: String,
+	emailId: String,
 	type: String,
 	homeUrl: String,
 	active: Boolean

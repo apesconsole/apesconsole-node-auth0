@@ -7,17 +7,29 @@ var Schema 			= mongoose.Schema;
 var itemSchema = mongoose.Schema({
 		item: String,
 		quantity: Number,
-		uom: String
+		uom: String,
+		currentLocation: String
 	},{ _id : false });
 	
 var requestSchema = mongoose.Schema({
 		requestId: String,
 		siteId: String,
 		taskId: String,
-		
 		item: String,
 		quantity: Number,
 		uom: String,
+		transfer: Boolean,
+		transferOrder: {
+			transferOrderId: String,
+			shippingVendor: String,
+			estimatedDeliveryDays: Number,
+			shippingId: String,
+			shippingCost: Number,
+			shippingType: String,
+			trackingId: String,
+			currency: String,
+			payment: Number
+		},
 		requestedBy: String,
 		requestDate: Date,
 		rejected: Boolean,

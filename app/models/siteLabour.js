@@ -14,6 +14,7 @@ var paymentSchema = mongoose.Schema({
 
 var billingSchema = mongoose.Schema({
 		billingId: String,
+		currency: String,
 		billingAmount: Number,
 		totalPayment: Number,
 		payments: [
