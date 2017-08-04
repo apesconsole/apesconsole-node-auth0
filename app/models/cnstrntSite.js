@@ -9,10 +9,15 @@ var taskchema = mongoose.Schema({
 		taskDescription: String,
 		currency: String,
 		estimatedCost: Number,
-		actualCost: Number,
-		totalPayment: Number,
-		totalLabour: Number,
+		//Inventory
+		actualInventoryCost: Number,
+		totalInventoryPayment: Number,
 		totalInventory: Number,
+		//Labour
+		actualLabourCost: Number,
+		totalLabourPayment: Number,		
+		totalLabour: Number,
+		
 		estimatedDays: Number,
 		daysRemaining: Number, 
 		taskStatus: String,

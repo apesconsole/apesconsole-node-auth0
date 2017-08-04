@@ -154,7 +154,16 @@ var emailHandler = function(emailContainer, callBack){
   cnstrntSiteUserMap.find({'siteId': emailContainer.siteId}).exec(function(err, validUsers) {
 		for(var i = 0; i<validUsers.length; i++){
 			if(validUsers[i].notification.active && validUsers[i].notification[emailContainer.notificationKey]){
-				emailContainer.toIdList[emailContainer.toIdList.length] = validUsers[i].userId;
+				if(emailContainer.targeted){
+					//Targeted Emails
+					if(validUsers[i].userId == emailContainer.targetedTo){
+						emailContainer.toIdList[emailContainer.toIdList.length] = validUsers[i].userId;
+						break;
+					}
+				} else{
+					//Assigned Emails
+					emailContainer.toIdList[emailContainer.toIdList.length] = validUsers[i].userId;
+				}
 			}
 		}
 		if(emailContainer.toIdList.length > 0){
@@ -197,6 +206,28 @@ router.get('/user', function(req, res) {
   });
 });
 
+//Inventory Set Up
+router.post('/saveinventoryconfig', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var configData = req.body.configData || req.query.configData;
+    var configDataJson = JSON.parse(configData); 
+	
+	//Update Config Data
+	inventoryConfig.update({configId: configDataJson.configId}, {
+			items: configDataJson.items, 
+			updatedBy: userId,
+			updateDate: new Date()
+		},function(err) {
+		if (err) {
+			res.json({ success: true, operation: false });
+		} else {
+			logger.log('Config Updated successfully');
+			res.json({ success: true , operation: true});
+		}
+	});
+});
+
+//Load Site Matrix Data
 router.get('/loadconstructionsitematrix', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   cnstrntSiteUserMap.find({'userId': userId}).exec(function(err, validSites) {
@@ -227,6 +258,11 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							totalWaitingTasks: 0,
 							totalHeldTasks: 0,
 							totalRunningTasks: 0,
+							actualInventoryCost: 0,
+							totalInventoryPayment: 0,
+							actualLabourCost: 0,
+							totalLabourPayment: 0,
+							totalLabour: 0,
 							totalCost: 0,
 							totalPayment: 0,
 							totalEstimatedCost: 0,
@@ -253,10 +289,22 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							if(tsk.taskStatus == 'Started'){
 								st.taskMatrix.totalRunningTasks = eval(st.taskMatrix.totalRunningTasks + 1); 
 							}
-							st.taskMatrix.totalCost = eval(st.taskMatrix.totalCost) + eval(tsk.actualCost);
-							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalEstimatedCost) + eval(tsk.estimatedCost);
-							st.taskMatrix.totalPayment = eval(st.taskMatrix.totalPayment) + eval(tsk.totalPayment);							
+							//Total Cost 
+							st.taskMatrix.actualInventoryCost = eval(st.taskMatrix.actualInventoryCost) + eval(tsk.actualInventoryCost);
+							st.taskMatrix.actualLabourCost = eval(st.taskMatrix.actualLabourCost) + eval(tsk.actualLabourCost);
+							
+							//Total Payment
+							st.taskMatrix.totalInventoryPayment = eval(st.taskMatrix.totalInventoryPayment) + eval(tsk.totalInventoryPayment);	
+							st.taskMatrix.totalLabourPayment = eval(st.taskMatrix.totalLabourPayment) + eval(tsk.totalLabourPayment);	
+							
+							//Total Estimation
+							st.taskMatrix.totalEstimatedCost = eval(st.taskMatrix.totalEstimatedCost) + eval(tsk.estimatedCost);	
+							
+							st.taskMatrix.totalLabour = eval(st.taskMatrix.totalLabour) + eval(tsk.totalLabour);
 						}
+						st.taskMatrix.totalCost = eval(st.taskMatrix.actualInventoryCost) + eval(st.taskMatrix.actualLabourCost);
+						st.taskMatrix.totalPayment = eval(st.taskMatrix.totalInventoryPayment) + eval(st.taskMatrix.totalLabourPayment);
+						
 						if(st.taskMatrix.totalEstimatedCost > st.taskMatrix.totalCost){
 							st.taskMatrix.savings = eval(st.taskMatrix.totalEstimatedCost) - eval(st.taskMatrix.totalCost);
 						}
@@ -272,40 +320,232 @@ router.get('/loadconstructionsitematrix', function(req, res) {
   });
 });
 
-//Set Up Task And Inventory
+//Create Task
 router.post('/createtask', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
-	var siteData = req.body.siteData || req.query.siteData;
+	var siteId = req.body.siteId || req.query.siteId;
+	var taskDetails = req.body.taskDetails || req.query.taskDetails;
 	var notificationData = req.body.notificationData || req.query.notificationData;
-	var taskInventory = req.body.taskInventory || req.query.taskInventory;
-	var taskLabour = req.body.taskLabour || req.query.taskLabour;
-    var siteDataJson = JSON.parse(siteData); 
-	var taskInventoryJson = JSON.parse(taskInventory); 
-	var taskLabourJson = JSON.parse(taskLabour); 
-	var newInventory = new siteInventory(taskInventoryJson);
-	var newLabour = new siteLabour(taskLabourJson);
+	
+    var newTaskJson = JSON.parse(taskDetails); 
+	newTaskJson.createdBy = userId;
+	newTaskJson.createDate  = new Date();
+	
+	var newInventory = new siteInventory({
+		siteId: siteId,
+		taskId: newTaskJson.taskId,
+		inventory: []
+	});
+	var newLabour = new siteLabour({
+		siteId: siteId,
+		taskId: newTaskJson.taskId,
+		labour: []
+	});
 	
 	var notificationDataJson = JSON.parse(notificationData);
-	
-	cnstrntSite.update({siteId: siteDataJson.siteId}, {
-			taskList: siteDataJson.taskList
-		},function(err) {
+
+	cnstrntSite.findOne({siteId: siteId}, function(err, siteData){
+		siteData.taskList.push(newTaskJson);
+		siteData.save(function(err, obj){
 		if (err) {
 			res.json({ success: true, operation: false });
 		} else {
 			logger.log('Site Updated successfully');
-			newInventory.save(function(err) {
-				if (err) {
-					res.json({ success: true, operation: false });
-				} else {	
-					newLabour.save(function(err) {
-						if (err) {
-							res.json({ success: true, operation: false });
+			newInventory.save(function(err, obj) {
+					if (err) {
+						res.json({ success: true, operation: false });
+					} else {	
+						newLabour.save(function(err) {
+							if (err) {
+								res.json({ success: true, operation: false });
+							} else {
+								logger.log('Task saved successfully');
+								emailHandler({
+								//Container
+									targeted: false,
+									targetedTo: '',
+									siteId: siteId,
+									notificationKey: notificationDataJson.key,
+									subject: notificationDataJson.subject,
+									content: notificationDataJson.message,
+									toIdList: []
+								},{
+									//Call Back
+									success: function(r){
+										logger.log('Email Sent Successfully');
+										res.json({ success: true, operation: true});
+									}, failure: function(){
+										logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+										res.json({ success: true , operation: true});
+									}
+								});
+							}
+						});	
+					}
+			   });			
+		     }
+		});
+	});
+});	
+
+//Update Task
+router.post('/updatetask', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteId = req.body.siteId || req.query.siteId;
+	var taskDetails = req.body.taskDetails || req.query.taskDetails;
+	var notificationData = req.body.notificationData || req.query.notificationData;
+	
+    var taskDetailsJson = JSON.parse(taskDetails); 
+	
+	var notificationDataJson = JSON.parse(notificationData);
+
+	cnstrntSite.findOne({siteId: siteId}, function(err, siteData){
+		siteData.taskList.forEach(function(task){
+			if(task.taskId == taskDetailsJson.taskId){
+				task.taskDescription  = taskDetailsJson.taskDescription;
+				task.estimatedCost  = taskDetailsJson.estimatedCost;
+				task.estimatedDays  = taskDetailsJson.estimatedDays;
+				task.daysRemaining  = taskDetailsJson.daysRemaining;
+				task.updatedBy  = userId;
+				task.updateDate  = new Date();
+				
+				siteData.save(function(err, obj){
+					if (err) {
+						res.json({ success: true, operation: false });
+					} else {
+						logger.log('Task Updated successfully');
+						emailHandler({
+						//Container
+							targeted: false,
+							targetedTo: '',						
+							siteId: siteId,
+							notificationKey: notificationDataJson.key,
+							subject: notificationDataJson.subject,
+							content: notificationDataJson.message,
+							toIdList: []
+						},{
+							//Call Back
+							success: function(r){
+								logger.log('Email Sent Successfully');
+								res.json({ success: true, operation: true});
+							}, failure: function(){
+								logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+								res.json({ success: true , operation: true});
+							}
+						});
+					}
+				});
+			}
+		});
+	});
+});	
+
+//Update Task Status
+router.post('/updatetaskstatus', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var siteId = req.body.siteId || req.query.siteId;
+	var taskDetails = req.body.taskDetails || req.query.taskDetails;
+	var notificationData = req.body.notificationData || req.query.notificationData;
+	
+    var taskDetailsJson = JSON.parse(taskDetails); 
+	
+	var notificationDataJson = JSON.parse(notificationData);
+
+	cnstrntSite.findOne({siteId: siteId}, function(err, siteData){
+		siteData.taskList.forEach(function(task){
+			if(task.taskId == taskDetailsJson.taskId){
+				task.taskStatus  = taskDetailsJson.taskStatus;
+				task.updatedBy   = userId;
+				task.updateDate  = new Date();
+				siteData.save(function(err, obj){
+					if (err) {
+						res.json({ success: true, operation: false });
+					} else {
+						logger.log('Task Updated successfully');
+						if(task.taskStatus == 'Complete'){
+							//Reclaim Inventory to Global Inventory
+							siteInventory.findOne({'siteId': siteId, taskId: taskDetailsJson.taskId}, function(err, inventoryData){
+								var inventory = inventoryData.inventory;
+								globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
+									var newRequestList = [];
+									for(var i = 0; i<inventory.length; i++){
+										if(inventory[i].quantity > 0){
+											var found = false;
+											for(var j = 0; j<globalData.items.length; j++){
+												//Save Global Items in their own Site Locations
+												if(inventory[i].item == globalData.items[j].item && 
+												   siteId == globalData.items[j].currentLocation){
+													 globalData.items[j].quantity = eval(globalData.items[j].quantity) + eval(inventory[i].quantity);
+													 found = true;
+												} 
+											}
+											if(!found){
+												globalData.items[globalData.items.length] = {
+													item: inventory[i].item,
+													uom: inventory[i].uom,
+													quantity: inventory[i].quantity,
+													currentLocation: siteId
+												};
+											}
+											inventory[i].quantity = 0;
+										}
+										//Reject All Pending Requests for Items in Task Inventory
+										if(inventory[i].requests.length == 0){
+											newRequestList = globalData.requests;
+										} else {
+											for(var j = 0; j<inventory[i].requests.length; j++){
+												inventory[i].requests[j].requestStatus = 'Cancelled';
+												inventory[i].requests[j].rejected = true;
+												inventory[i].requests[j].rejectedBy = 'System';
+												inventory[i].requests[j].rejectionDate = new Date();
+												for(var k = 0; k<globalData.requests.length; k++){
+													//Remove All Rejected Requests for a Completed Task
+													if(inventory[i].requests[j].requestId != globalData.requests[k].requestId){
+														newRequestList[newRequestList.length] = globalData.requests[k];
+													}
+												}
+											}
+										}
+									}
+									inventoryData.save(function(err, obj) {
+										if (err) {
+											res.json({ success: true, operation: false });
+										} else {
+											logger.log('Invetory Updated successfully');
+											globalData.save(function(err, obj) {
+												if (err) {
+													res.json({ success: true, operation: false });
+												} else {
+													logger.log('Global Inventory saved successfully');
+													emailHandler({
+													//Container
+														siteId: siteId,
+														notificationKey: notificationDataJson.key,
+														subject: notificationDataJson.subject,
+														content: notificationDataJson.message,
+														toIdList: []
+													},{
+														//Call Back
+														success: function(r){
+															logger.log('Email Sent Successfully');
+															res.json({ success: true, operation: true});
+														}, failure: function(){
+															logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+															res.json({ success: true , operation: true});
+														}
+													});
+												}
+											});
+										}
+									});
+								});
+							});
 						} else {
-							logger.log('Task saved successfully');
 							emailHandler({
 							//Container
-								siteId: siteDataJson.siteId,
+								targeted: false,
+								targetedTo: '',									
+								siteId: siteId,
 								notificationKey: notificationDataJson.key,
 								subject: notificationDataJson.subject,
 								content: notificationDataJson.message,
@@ -314,171 +554,20 @@ router.post('/createtask', function(req, res) {
 								//Call Back
 								success: function(r){
 									logger.log('Email Sent Successfully');
-									res.json({ success: true, operation: true });
+									res.json({ success: true, operation: true});
 								}, failure: function(){
-									logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
+									logger.log('Email Not Sent. But it is still a Successfull Data Entry');
 									res.json({ success: true , operation: true});
 								}
 							});
 						}
-					});	
-				}
-			});			
-		}
-	});	
-});	
-
-router.post('/edittask', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var notificationData = req.body.notificationData || req.query.notificationData;
-	var siteData = req.body.siteData || req.query.siteData;
-	var taskDetails = req.body.taskDetails || req.query.taskDetails;
-    var siteDataJson = JSON.parse(siteData); 
-	var taskDetailsJson = JSON.parse(taskDetails);
-	
-	var notificationDataJson = JSON.parse(notificationData);
-	
-	cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, siteTaskData) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			siteDataJson.taskList = siteTaskData.taskList;
-			for(var i=0; i<siteDataJson.taskList.length; i++){
-				if(siteDataJson.taskList[i].taskId == taskDetailsJson.taskId){
-					if(siteDataJson.taskList[i].taskStatus != 'Complete'){
-						//Update Target Task Only
-						siteDataJson.taskList[i].taskStatus = taskDetailsJson.taskStatus;
-						siteDataJson.taskList[i].taskDescription = taskDetailsJson.taskDescription;
-						siteDataJson.taskList[i].estimatedCost = taskDetailsJson.estimatedCost;
-						cnstrntSite.update({siteId: siteDataJson.siteId}, {
-								taskList: siteDataJson.taskList
-							},function(err) {
-							if (err) {
-								res.json({ success: true, operation: false });
-							} else {
-								logger.log('Site Updated successfully');
-								if(taskDetailsJson.taskStatus == 'Complete'){
-									siteInventory.findOne({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}).exec(function(err, inventoryData) {
-										if(!err){
-											var inventory = inventoryData.inventory;
-											globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
-												if(!err){
-													var newRequestList = [];
-													for(var i = 0; i<inventory.length; i++){
-														if(inventory[i].quantity > 0){
-															var found = false;
-															for(var j = 0; j<globalData.items.length; j++){
-																//Save Global Items in their own Site Locations
-																if(inventory[i].item == globalData.items[j].item && 
-																   siteDataJson.siteId == globalData.items[j].currentLocation){
-																	 globalData.items[j].quantity = eval(globalData.items[j].quantity) + eval(inventory[i].quantity);
-																	 found = true;
-																} 
-															}
-															if(!found){
-																globalData.items[globalData.items.length] = {
-																	item: inventory[i].item,
-																	uom: inventory[i].uom,
-																	quantity: inventory[i].quantity,
-																	currentLocation: siteDataJson.siteId
-																};
-															}
-															inventory[i].quantity = 0;
-														}
-														//Reject All Pending Requests for Items in Task Inventory
-														if(inventory[i].requests.length == 0){
-															newRequestList = globalData.requests;
-														} else {
-															for(var j = 0; j<inventory[i].requests.length; j++){
-																inventory[i].requests[j].rejected = true;
-																inventory[i].requests[j].rejectedBy = 'System';
-																inventory[i].requests[j].rejectionDate = new Date();
-																for(var k = 0; k<globalData.requests.length; k++){
-																	//Remove All Rejected Requests for a Completed Task
-																	if(inventory[i].requests[j].requestId != globalData.requests[k].requestId){
-																		newRequestList[newRequestList.length] = globalData.requests[k];
-																	}
-																}
-															}
-														}
-													}
-													//Update Config Data
-													globalInventory.update({configId: 'ITEM'}, {
-															items: globalData.items,
-															requests: newRequestList,
-															updatedBy: userId,
-															updateDate: new Date()
-														},function(err) {
-														if (err) {
-															res.json({ success: true, operation: false });
-														} else {
-															logger.log('Global Data Updated Successfully');
-															siteInventory.update({'siteId': siteDataJson.siteId, taskId: taskDetailsJson.taskId}, {
-																	inventory: inventory, 
-																},function(err) {
-																if (err) {
-																	res.json({ success: true, operation: false });
-																} else {
-																	logger.log('Site Data Updated Successfully');
-																	emailHandler({
-																	//Container
-																		siteId: siteDataJson.siteId,
-																		notificationKey: notificationDataJson.key,
-																		subject: notificationDataJson.subject,
-																		content: notificationDataJson.message,
-																		toIdList: []
-																	},{
-																		//Call Back
-																		success: function(r){
-																			logger.log('Email Sent Successfully');
-																			res.json({ success: true, operation: true });
-																		}, failure: function(){
-																			logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
-																			res.json({ success: true , operation: true});
-																		}
-																	});
-																}
-															});
-														}
-													});	
-												}
-											});
-										}
-										else res.json({ success: true , operation: false});
-									});
-								}
-								else {
-									emailHandler({
-									//Container
-										siteId: siteDataJson.siteId,
-										notificationKey: notificationData.key,
-										subject: notificationData.subject,
-										content: notificationData.message,
-										toIdList: []
-									},{
-										//Call Back
-										success: function(r){
-											logger.log('Email Sent Successfully');
-											res.json({ success: true, operation: true });
-										}, failure: function(){
-											logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
-											res.json({ success: true , operation: true});
-										}
-									});	
-								}				
-							}
-						});							
-					} else {
-						//Already Completed Flow
-						res.json({ success: true , operation: true});
 					}
-				}
+				});
 			}
-		
-		}
+		});
 	});
 });	
-	
+
 //Inventory Set Up
 router.get('/loadglobaliteminventoryconfig', function(req, res) {
   globalInventory.findOne({configId: "ITEM"},function(err, configData) {
@@ -486,165 +575,262 @@ router.get('/loadglobaliteminventoryconfig', function(req, res) {
   });
 });
 
-router.post('/saveglobalinventoryrequests', function(req, res) {
+router.post('/saveglobalinventoryrequest', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
-	var configData = req.body.configData || req.query.configData;
-    var configDataJson = JSON.parse(configData); 
-	//Update Config Data
-	globalInventory.update({configId: 'ITEM'}, {
-			requests: configDataJson.requests,
-			updatedBy: userId,
-			updateDate: new Date()
-		},function(err) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			logger.log('Global Config Updated successfully');
-			res.json({ success: true , operation: true});
-		}
+	var requestData = req.body.requestData || req.query.requestData;
+    var notificationData = req.body.notificationData || req.query.notificationData;
+    
+	var notificationDataJson = JSON.parse(notificationData);	
+    var requestDataJson = JSON.parse(requestData); 
+	requestDataJson.requestedBy = userId;
+	requestDataJson.requestDate = new Date();
+	//Add Request Data
+	globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
+		if(!err){
+			globalDataSet.requests.push(requestDataJson);
+			globalDataSet.save(function(err1, obj){
+				if (!err1) {
+					siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err2, taskInventory) {
+						if(!err2){
+							taskInventory.inventory.forEach(function(item){
+								if(item.item == requestDataJson.item){
+									let existingOpneRequests = false;
+									item.requests.forEach(function(_r){
+										if(!_r.approved || _r.requestStatus != 'Complete' && !_r.rejected){
+											existingOpneRequests = true;
+										}
+										return;
+									});
+									if(!existingOpneRequests){
+										item.requests.push(requestDataJson);
+									}									
+								}
+							});	
+							taskInventory.save(function(err3, obj2){
+								logger.log('Request Registered successfully');
+								emailHandler({
+								//Container
+									targeted: false,
+									targetedTo: '',													
+									siteId: requestDataJson.siteId,
+									notificationKey: notificationDataJson.key,
+									subject: notificationDataJson.subject,
+									content: notificationDataJson.message,
+									toIdList: []
+								},{
+									//Call Back
+									success: function(r){
+										logger.log('Email Sent Successfully');
+										res.json({ success: true, operation: true });
+									}, failure: function(){
+										logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+										res.json({ success: true , operation: true});
+									}
+								});
+							});								
+						} else res.json({ success: true, operation: false });
+					});
+				} else {
+					res.json({ success: true, operation: false });
+				}
+			});
+		} else res.json({ success: true , operation: true});
 	});
 });
-
 
 router.post('/rejectglobalinventoryrequests', function(req, res) {
 	var userId = req.body.userId || req.query.userId;
 	var rejectedRequest = req.body.rejectedRequest || req.query.rejectedRequest;
-	var globalData = req.body.globalData || req.query.globalData;
-	var globalDataJson = JSON.parse(globalData); 
-    var rejectedRequestJson = JSON.parse(rejectedRequest); 
+    var notificationData = req.body.notificationData || req.query.notificationData;
+    
+	var notificationDataJson = JSON.parse(notificationData);
 	
-	var newRequestList = []
-	for(var i = 0; i<globalDataJson.requests.length; i++){
-		//Remove from Global Data Set
-		if(globalDataJson.requests[i].requestId != rejectedRequestJson.requestId){
-			newRequestList[newRequestList.length] = globalDataJson.requests[i];
-		}
-	}
-	
-	siteInventory.findOne({ 'siteId': rejectedRequestJson.siteId, 'taskId': rejectedRequestJson.taskId }).exec(function(err, inventoryData) {
-		  if(!err){
-				for(var i = 0; i<inventoryData.inventory.length; i++){
-					if(inventoryData.inventory[i].item != rejectedRequestJson.item){
-						var requests = inventoryData.inventory[i].requests;
-						for(var j = 0; j<requests.length; j++){
-							//Reject Task Data Set
-							if(requests[j].requestId != rejectedRequestJson.requestId){
-								requests[j].rejected = true;
-								requests[j].rejectedBy = userId;
-								requests[j].rejectionDate = new Date();
-								break;
-							}
-						}
-					}
+	var rejectedRequestJson = JSON.parse(rejectedRequest); 
+	//Update Request Data
+	globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
+		if(!err){
+			let found = false;
+			globalDataSet.requests.forEach(function(_request){
+				if(_request.requestId == rejectedRequestJson.requestId && !_request.approved){
+					globalDataSet.requests.pull({requestId: _request.requestId});
 				}
-
-				globalInventory.update({configId: 'ITEM'}, {
-						requests: newRequestList,
-						updatedBy: userId,
-						updateDate: new Date()
-					},function(err) {
-					if (err) {
-						res.json({ success: true, operation: false });
-					} else {
-						logger.log('Global Config Updated successfully');
-						siteInventory.update({siteId: rejectedRequestJson.siteId, taskId: rejectedRequestJson.taskId}, {
-								requests: inventoryData.inventory
-							},function(err) {
-								if(!err){
-									logger.log('Site Data Updated successfully');
-									res.json({ success: true , operation: true, response: response});
-								} else res.json({ success: true, operation: false });
+			});
+			globalDataSet.save(function(err1, obj){
+				if (!err1) {
+					siteInventory.findOne({ 'siteId': rejectedRequestJson.siteId, 'taskId': rejectedRequestJson.taskId }, function(err2, taskInventory) {
+						if(!err2){
+							taskInventory.inventory.forEach(function(item){
+								if(item.item == rejectedRequestJson.item){
+									item.requests.forEach(function(_r){
+										if(_r.requestId == rejectedRequestJson.requestId){
+											_r.requestStatus = 'Rejected';
+											_r.rejected = true;
+											_r.rejectedBy = userId;
+											_r.rejectionDate = new Date();
+										}
+									});
+								}
 							});
-					}
-				});
-		  }
-		  else res.json({ success: true, operation: false });
+							taskInventory.save(function(err4, obj2){
+								logger.log('Request Registered successfully');
+								emailHandler({
+								//Container
+									targeted: true,
+									targetedTo: rejectedRequestJson.requestedBy,
+									siteId: rejectedRequestJson.siteId,
+									notificationKey: notificationDataJson.key,
+									subject: notificationDataJson.subject,
+									content: notificationDataJson.message,
+									toIdList: []
+								},{
+									//Call Back
+									success: function(r){
+									console.log('End !!!!!');
+										if(!found) found = true;
+										logger.log('Email Sent Successfully');
+										res.json({ success: true, operation: true });
+									}, failure: function(){
+										logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+										res.json({ success: true , operation: true});
+									}
+								});
+							});								
+						} else res.json({ success: true, operation: false });									
+					});
+				} else  res.json({ success: true, operation: false });
+			});			
+		} else res.json({ success: true , operation: false});
 	});
 });
 
-router.post('/approveglobalinventoryrequest', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var siteData = req.body.siteData || req.query.siteData;
-	var requestId = req.body.requestId || req.query.requestId;
-	var selectedItem = req.body.selectedItem || req.query.selectedItem;
-    var siteDataJson = JSON.parse(siteData);
-	
-	//Update Config Data
-	globalInventory.findOne({configId: "ITEM"},function(err, globalData) {
-		if(!err){
-			console.log(1);
-			var found = false;
-			var availableQuantity = 0;
-			for(var i = 0; i<globalData.items.length; i++ ){
-				if(globalData.items[i].item == selectedItem){
-					found = true;
-					availableQuantity = globalData.items[i].quantity;
-					break;
-				}
-			}
-			console.log(2);
-			if(found){
-				console.log(3);
-				var response = {};
-				for(var i = 0; i<globalData.requests.length; i++ ){
-					if(globalData.requests[i].requestId == requestId && globalData.requests[i].siteId == siteDataJson.siteId && globalData.requests[i].taskId == siteDataJson.taskId){
-					   if(!globalData.requests[i].rejected && !globalData.requests[i].approved && availableQuantity < globalData.requests[i].quantity){
-							globalData.requests[i].rejected = true;
-							globalData.requests[i].rejectedBy = 'System';
-							globalData.requests[i].rejectionDate = new Date();
-							response['status'] = 'Request Rejected! Not Enough Quntity';
-					   } else if(!globalData.requests[i].rejected && !globalData.requests[i].approved && availableQuantity >= globalData.requests[i].quantity){
-							globalData.requests[i].approved = true;
-							globalData.requests[i].approvedBy = userId;
-							globalData.requests[i].approvalDate = new Date();
-							response['status'] = 'Request Approved!';
-							
-							//Global Inventory Reduced
-							for(var j = 0; j<globalData.items.length; j++ ){
-								if(globalData.items[j].item == selectedItem){
-									console.log('globalData.items[j].quantity = ' + globalData.items[j].quantity);
-									globalData.items[j].quantity = eval(globalData.items[j].quantity) - eval(globalData.requests[i].quantity);
-									console.log('After Update quantity = ' + globalData.items[j].quantity);
-									break;
-								}
-							}
-							
-							//Task Inventory Increased
-							for(var j = 0; j<siteDataJson.inventory.length; j++ ){
-								if(siteDataJson.inventory[j].item = selectedItem){
-									console.log('siteDataJson.inventory[j].quantity = ' + siteDataJson.inventory[j].quantity);
-									siteDataJson.inventory[j].quantity = eval(siteDataJson.inventory[j].quantity) + eval(globalData.requests[i].quantity);
-									console.log('After Update quantity = ' + siteDataJson.inventory[j].quantity);
-									break;
-								}
-							}
-					   }
-					   console.log(response['status']);
-					   break;
+router.post('/updatesiterequestdetailsallocate', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		var found = false;
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Open'){
+						if(!found) found = true;
+						_request.requestStatus = 'Allocated';
+						_request.quantity = Number(requestDataJson.quantity);					
 					}
-				}
+				});
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			if(err2){
+				res.json({ success: true , operation: false});
+			} else {
+				res.json({ success: true , operation: true });
 			}
-			globalInventory.update({configId: 'ITEM'}, {
-					items: globalData.items,
-					requests: globalData.requests,
-					updatedBy: userId,
-					updateDate: new Date()
-				},function(err) {
-				if (err) {
-					res.json({ success: true, operation: false});
-				} else {
-					logger.log('Config Updated successfully');
-					siteInventory.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
-							inventory: siteDataJson.inventory
-						},function(err) {
-							if(!err){
-								logger.log('Site Data Updated successfully');
-								res.json({ success: true , operation: true, response: response});
-							} else res.json({ success: true, operation: false });
-						});
+		});			
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/updatesiterequestdetailsship', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Allocated'){
+						_request.requestStatus = 'Shipped';
+						_request.quantity = Number(requestDataJson.quantity);
+						_request.transferOrder.transferOrderId = requestDataJson.transferOrder.transferOrderId;
+						_request.transferOrder.shippingVendor = requestDataJson.transferOrder.shippingVendor;
+						_request.transferOrder.shippingType = requestDataJson.transferOrder.shippingType;
+						_request.transferOrder.trackingId = requestDataJson.transferOrder.trackingId;
+						_request.transferOrder.shippingCost = requestDataJson.transferOrder.shippingCost;
+					}
+				});
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			if(err2){
+				res.json({ success: true , operation: false});
+			} else {
+				res.json({ success: true , operation: true });
+			}
+		});			
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/approveglobalinventoryrequests', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var requestData = req.body.requestData || req.query.requestData;
+    var notificationData = req.body.notificationData || req.query.notificationData;
+    
+	var notificationDataJson = JSON.parse(notificationData);
+	
+	var requestDataJson = JSON.parse(requestData); 
+	//Update Request Data
+	globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
+		if(!err){
+			let _r = {};
+			globalDataSet.requests.forEach(function(_request){
+				if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Open'){
+					_request.quantity = Number(requestDataJson.quantity);
+					_request.requestStatus = 'Allocated';
+					_request.approved = true;
+					globalDataSet.items.forEach(function(_item){
+						//Assign Quantity from 
+						if(_item.item == requestDataJson.item && _item.currentLocation == requestDataJson.currentLocation){
+							_item.quantity =  Number(_item.quantity) - Number(requestDataJson.quantity);
+						}
+					});
+					_r = _request;
 				}
 			});
-		} else res.json({ success: true, operation: false });
+			globalDataSet.save(function(err1, obj){
+				if (!err1) {
+					res.json({ success: true, operation: true, _items: globalDataSet.items, _requests: globalDataSet.requests, _request: _r});
+				} else  res.json({ success: true, operation: false });
+			});			
+		} else res.json({ success: true , operation: false});
+	});
+});
+
+router.post('/shipglobalinventoryrequests', function(req, res) {
+	var userId = req.body.userId || req.query.userId;
+	var requestData = req.body.requestData || req.query.requestData;
+    var notificationData = req.body.notificationData || req.query.notificationData;
+    
+	var notificationDataJson = JSON.parse(notificationData);
+	
+	var requestDataJson = JSON.parse(requestData); 
+	//Update Request Data
+	globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
+		if(!err){
+			let _r = {};
+			globalDataSet.requests.forEach(function(_request){
+				if(_request.requestId == requestDataJson.requestId && _request.approved && _request.requestStatus == 'Allocated'){
+					_request.requestStatus = 'Shipped';
+					_request.quantity = Number(requestDataJson.quantity);
+					_request.transferOrder.transferOrderId = requestDataJson.transferOrder.transferOrderId;
+					_request.transferOrder.shippingVendor = requestDataJson.transferOrder.shippingVendor;
+					_request.transferOrder.shippingType = requestDataJson.transferOrder.shippingType;
+					_request.transferOrder.trackingId = requestDataJson.transferOrder.trackingId;
+					_request.transferOrder.shippingCost = requestDataJson.transferOrder.shippingCost;
+					_r = _request;
+				}
+			});
+			globalDataSet.save(function(err1, obj){
+				if (!err1) {
+					res.json({ success: true, operation: true, _items: globalDataSet.items, _requests: globalDataSet.requests, _request: _r});
+				} else  res.json({ success: true, operation: false });
+			});
+		} else res.json({ success: true , operation: false});
 	});
 });
 
@@ -656,25 +842,6 @@ router.get('/loaditeminventoryconfig', function(req, res) {
   });
 });
 
-router.post('/saveinventoryconfig', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var configData = req.body.configData || req.query.configData;
-    var configDataJson = JSON.parse(configData); 
-	
-	//Update Config Data
-	inventoryConfig.update({configId: configDataJson.configId}, {
-			items: configDataJson.items, 
-			updatedBy: userId,
-			updateDate: new Date()
-		},function(err) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			logger.log('Config Updated successfully');
-			res.json({ success: true , operation: true});
-		}
-	});
-});
 
 router.get('/loadcnstrntsites', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
@@ -692,6 +859,76 @@ router.get('/loadcnstrntsites', function(req, res) {
   });
 });
 
+router.post('/reconsileinventorycostsandpayments', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  cnstrntSite.findOne({siteId: siteId}, function(err, siteTaskMap){
+	if(err)
+		res.json({ success: true , operation: false});
+	else {
+		siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err2, taskInventory) {
+			if(err)
+				res.json({ success: true , operation: false});
+			siteTaskMap.taskList.forEach(function(task){
+				if(task.taskId == taskId){
+					let actualCost = 0;
+					let totalPayment = 0;
+					taskInventory.inventory.forEach(function(item){
+						//Sum Up all Costs for Task
+						actualCost = eval(actualCost) + eval(item.totalPrice);
+						totalPayment = eval(totalPayment) + eval(item.totalPayment);
+					});
+					task.actualInventoryCost = actualCost;
+					task.totalInventoryPayment = totalPayment;					
+				}
+			});	
+			siteTaskMap.save(function(err2, obj){
+				res.json({ success: true , operation: true});
+			});					
+		});	
+	}
+  });
+});
+
+router.post('/reconsilelabourbillsandpayments', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  cnstrntSite.findOne({siteId: siteId}, function(err, siteTaskMap){
+	if(err)
+		res.json({ success: true , operation: false}); 
+	else
+    siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err2, taskLabour) {
+	    if(err2)
+			res.json({ success: true , operation: false}); 
+		siteTaskMap.taskList.forEach(function(task){
+			if(task.taskId == taskId){
+				let actualCost = 0;
+				let totalPayment = 0;
+				let totalLabour = 0;
+				taskLabour.labour.forEach(function(labour){
+					//Sum Up all Costs for Task
+					actualCost = eval(actualCost) + eval(labour.totalBill);
+					totalPayment = eval(totalPayment) + eval(labour.totalPayment);
+					if(labour.active){
+						//Consider only Active Labour
+						totalLabour = eval(totalLabour) + eval(labour.count);
+					}
+				});
+				task.actualLabourCost = actualCost;
+				task.totalLabourPayment = totalPayment;
+				task.totalLabour = totalLabour;
+			}
+		});
+		siteTaskMap.save(function(err3, obj){
+			res.json({ success: true , operation: true});
+		});
+	});	
+  });
+});
+
+//Load Inventory
 router.get('/loadsiteinventory', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   var siteId = req.body.siteId || req.query.siteId;	
@@ -704,151 +941,536 @@ router.get('/loadsiteinventory', function(req, res) {
   });
 });
 
-router.post('/savesiteinventory', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var notificationData = req.body.notificationData || req.query.notificationData;
-	var siteData = req.body.siteData || req.query.siteData;
-    var siteDataJson = JSON.parse(siteData); 
-	
-	var notificationDataJson = JSON.parse(notificationData);
-	
-	for(var i=0; i<siteDataJson.inventory.length; i++ ){
-		var totalInventoryPayment = 0;
-		var totalInventoryPrice = 0;
-		var orders = siteDataJson.inventory[i].orders;
-		for(var j=0; j<orders.length; j++ ){
-			var order = orders[j];
-			if(order.approved){
-				var totalOrderPayment = 0;
-				for(var k=0; k<order.payments.length; k++ ){
-					var payment = order.payments[k];
-					totalOrderPayment = eval(totalOrderPayment) + eval(payment.payment);
+//Add Inventory Item
+router.post('/addinventory', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var newInventory = req.body.newInventory || req.query.newInventory;
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var inventoryDataJson = JSON.parse(newInventory); 
+  inventoryDataJson.createdBy = userId;
+  inventoryDataJson.createDate = new Date();
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		taskInventory.inventory.push(inventoryDataJson);
+		taskInventory.save(function(err2, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',					
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true});
 				}
-				siteDataJson.inventory[i].orders[j].totalPayment = eval(totalOrderPayment);
-				totalInventoryPrice = eval(totalInventoryPrice) + eval(order.totalPrice);
-				totalInventoryPayment = eval(totalInventoryPayment) + eval(totalOrderPayment);				
-			}
-		}
-		siteDataJson.inventory[i].totalPayment = totalInventoryPayment;
-		siteDataJson.inventory[i].totalPrice = totalInventoryPrice;		
-	}	
-	console.log('Save step 1 - Complete');
-	//Update Inventory Data
-	siteInventory.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
-			inventory: siteDataJson.inventory
-		},function(err) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			logger.log('Inventory Updated successfully');
-			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
-				  var totalCost = 0;
-				  var totalPayment = 0;
-				  for(var i=0; i<siteDataJson.inventory.length; i++ ){
-					  var item = siteDataJson.inventory[i];
-					  totalCost = eval(totalCost) + eval(item.totalPrice);
-					  totalPayment = eval(totalPayment + item.totalPayment);
-					  console.log('Inventory Cost: siteDataJson.inventory - i =' + 0 + ', cost=' +  totalCost);
-					  console.log('Inventory totalPayment: siteDataJson.inventory - i =' + 0 + ', cost=' +  totalPayment);
-				  }	
-				  console.log('Inventory Cost: ' +  totalCost);
-				  siteLabour.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, labourData) {
-					  for(var i=0; i<labourData.labour.length; i++ ){
-						  var labour = labourData.labour[i];
-						  totalCost = eval(totalCost) + eval(labour.totalBill);
-						  totalPayment = eval(totalPayment + labour.totalPayment);
-						  console.log('labour totalPayment: labourData.labour - i =' + 0 + ', cost=' +  totalPayment);
-					  }	
-					  console.log('Labour Cost: ' +  totalCost);
-					  console.log('Labour Pay: ' +  totalPayment);
-					  for(var i=0; i<data.taskList.length; i++ ){
-						  if(data.taskList[i].taskId == siteDataJson.taskId){
-							data.taskList[i].actualCost = totalCost;
-							data.taskList[i].totalPayment = totalPayment;
-							break;
-						  }
-					  }	
-					  console.log('Task Cost: ' +  totalCost);
-					  cnstrntSite.update({siteId: siteDataJson.siteId}, {
-							taskList: data.taskList
-						},function(err) {
-							if (err) {
-								res.json({ success: true, operation: false });
-							} else {
-								logger.log('Task Cost Updated successfully');									
-								inventoryConfig.findOne({configId: "ITEM"},function(err, configData) {
-									if(!err){
-										var lockItem = false;
-										for(var i=0; i<siteDataJson.inventory.length; i++ ){
-											for(var j=0; j<configData.items.length; j++ ){
-												console.log('configData.items[j].canDelete = ' + configData.items[j].canDelete);
-												if(configData.items[j].canDelete && siteDataJson.inventory[i].item == configData.items[j].item){
-													configData.items[j].canDelete = false;
-													lockItem = true;
-													break;
-												}
-											}
-											if(lockItem) break;
-										}
-										if(lockItem){
-											inventoryConfig.update({configId: 'ITEM'}, {
-													items: configData.items, 
-													updatedBy: 'System',
-													updateDate: new Date()
-												},function(err) {
-												if (err) {
-													res.json({ success: true, operation: false });
-												} else {
-													logger.log('Config Locked successfully');
-													emailHandler({
-													//Container
-														siteId: siteDataJson.siteId,
-														notificationKey: notificationDataJson.key,
-														subject: notificationDataJson.subject,
-														content: notificationDataJson.message,
-														toIdList: []
-													},{
-														//Call Back
-														success: function(r){
-															logger.log('Email Sent Successfully');
-															res.json({ success: true, operation: true });
-														}, failure: function(){
-															logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
-															res.json({ success: true , operation: true});
-														}
-													});
-												}
-											});
-										} else {
-
-											emailHandler({
-											//Container
-												siteId: siteDataJson.siteId,
-												notificationKey: notificationDataJson.key,
-												subject: notificationDataJson.subject,
-												content: notificationDataJson.message,
-												toIdList: []
-											},{
-												//Call Back
-												success: function(r){
-													logger.log('Email Sent Successfully');
-													res.json({ success: true, operation: true });
-												}, failure: function(){
-													logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
-													res.json({ success: true , operation: true});
-												}
-											});
-										}											
-									} else res.json({success: true, data: []});
-								});								
-							}
-					  });	
-				  });
-		    });
-		}
-	});
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: true});
+  });
 });
 
+router.post('/approveinventory', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.approved = true;
+				item.approvedBy = userId;
+				item.approvalDate = new Date();
+			}		
+		});
+		taskInventory.save(function(err2, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',		
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true});
+				}
+			});
+		});		
+	  }
+	  else res.json({ success: true , operation: true});
+  });
+});
+
+router.post('/addinventoryorder', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  
+  var newOrder = req.body.newOrder || req.query.newOrder;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var newOrderJson = JSON.parse(newOrder); 
+  newOrderJson.createdBy = userId;
+  newOrderJson.createDate = new Date();
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		let _orders = [];
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.orders.push(newOrderJson);
+				_orders = item.orders;
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',							
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, orders: _orders });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, orders: _orders });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/deleteinventoryorder', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  
+  var orderData = req.body.orderData || req.query.orderData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+
+  var notificationDataJson = JSON.parse(notificationData);
+  var orderDataJson = JSON.parse(orderData); 
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.orders.pull({orderId: orderDataJson.orderId, approved: false});
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			//Fetch Latest Data. Pull does not reflect until Saved!
+			siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory2) {
+				let _orders = [];
+				taskInventory2.inventory.forEach(function(item2){
+					if(item2.item == selectedItem){
+						_orders = item2.orders;
+					}
+				});
+				emailHandler({
+				//Container
+					targeted: false,
+					targetedTo: '',										
+					siteId: siteId,
+					notificationKey: notificationDataJson.key,
+					subject: notificationDataJson.subject,
+					content: notificationDataJson.message,
+					toIdList: []
+				},{
+					//Call Back
+					success: function(r){
+						logger.log('Email Sent Successfully');
+						res.json({ success: true, operation: true, orders: _orders });
+					}, failure: function(){
+						logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+						res.json({ success: true , operation: true, orders: _orders });
+					}
+				});				
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/completeinventoryorder', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  
+  var orderData = req.body.orderData || req.query.orderData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+
+  var notificationDataJson = JSON.parse(notificationData);
+  var orderDataJson = JSON.parse(orderData); 
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _orders = [];
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.orders.forEach(function(order){
+					if(order.orderId == orderDataJson.orderId){
+						order.orderStatus = 'Complete';
+						order.updatedBy = userId;
+						order.updateDate = new Date();
+					}
+				});
+				_orders = item.orders;
+			} 
+		});
+		taskInventory.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',									
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, orders: _orders });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, orders: _orders });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/approveinventoryorder', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  
+  var orderData = req.body.orderData || req.query.orderData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+
+  var notificationDataJson = JSON.parse(notificationData);
+  var orderDataJson = JSON.parse(orderData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.orders.forEach(function(order){
+					if(order.orderId == orderDataJson.orderId && !order.approved && order.orderStatus == 'Complete' ){
+						order.approved = true;
+						order.approvedBy = userId;
+						order.approvalDate = new Date();
+						
+						//Update Total Price
+						item.totalPrice = eval(item.totalPrice) + eval(orderDataJson.totalPrice);
+						//Add Quantity to Inventory
+						item.quantity = eval(item.quantity) + eval(orderDataJson.quantity);
+					}
+				});
+				_item = item;
+			} 
+		});	
+		taskInventory.save(function(err2, obj){
+			emailHandler({
+			//Container
+				targeted: true,
+				targetedTo: orderData.createdBy,									
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, item: _item });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, item: _item });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/cancelinventoryrequest', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		var _r = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Rejected'){
+						_request.requestStatus = 'Cancelled';
+						_r = _request
+					}
+				});
+				_item = item;
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			res.json({ success: true , operation: true, request: _r, item: _item});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/deleteglobalrequestdetails', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  
+  globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
+	  if(!err){
+		globalDataSet.requests.forEach(function(_request){
+			if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Shipped'){
+				globalDataSet.requests.pull({requestId: _request.requestId});
+			}
+		});
+		globalDataSet.save(function(err2, obj){
+			res.json({ success: true , operation: true});
+		});
+	 } else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/receiveinventoryrequest', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		var _r = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Shipped'){
+						_request.requestStatus = 'Received';
+						_r = _request;
+					}
+				});
+				_item = item;
+			} 
+		});
+		taskInventory.save(function(err, obj){
+			res.json({ success: true , operation: true, request: _r, item: _item});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/approveinventoryrequest', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		var _r = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Received'){
+						_request.requestStatus = 'Approved';
+						_request.approved = true;
+						_request.approvedBy = userId;
+						_request.approvalDate = new Date();
+						if(requestDataJson.transfer){
+							//Update Total Price
+							item.totalPrice = Number(item.totalPrice) + Number(_request.transferOrder.shippingCost);
+							//Add Quantity to Inventory
+							item.quantity = Number(item.quantity) + Number(_request.quantity);
+						}
+						_r = _request;
+					}
+				});
+				_item = item;
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			if(err2){
+				res.json({ success: true , operation: false});
+			} else {
+				res.json({ success: true , operation: true, request: _r, item: _item });
+			}
+		});			
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/payinventoryorder', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  
+  var orderId = req.body.orderId || req.query.orderId;
+	
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  
+  var paymentData = req.body.paymentData || req.query.paymentData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+
+  var notificationDataJson = JSON.parse(notificationData);
+  var paymentDataJson = JSON.parse(paymentData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == selectedItem){
+				item.orders.forEach(function(order){
+					if(order.orderId == orderId && order.approved && order.orderStatus == 'Complete' ){
+						let totalPayment = 0;
+						order.payments.forEach(function(payment){
+							totalPayment = eval(payment.payment);
+						});
+						let ballance = eval(order.totalPrice) - eval(totalPayment);
+						if(eval(paymentDataJson.paidAmount) > ballance){
+							return res.json({ success: true, operation: true, item: item , dispute: true});
+						} else {
+							order.payments.push({
+								paymentId: paymentDataJson.paymentId,
+								payment: paymentDataJson.paidAmount,
+								paidBy: userId,
+								paymentDate: new Date()	
+							});
+							order.totalPayment = eval(order.totalPayment) + eval(paymentDataJson.paidAmount);
+							item.totalPayment = eval(item.totalPayment) + eval(paymentDataJson.paidAmount);
+						}
+					}
+				});
+				_item = item;
+			} 
+		});
+		taskInventory.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',								
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, item: _item, dispute: false });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, item: _item, dispute: false});
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/payinventoryrequest', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var requestData = req.body.requestData || req.query.requestData;
+  var requestDataJson = JSON.parse(requestData);
+  
+  siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
+	  if(!err){
+		var _item = {};
+		var _r = {};
+		taskInventory.inventory.forEach(function(item){
+			if(item.item == requestDataJson.item){
+				item.requests.forEach(function(_request){
+					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Approved'){
+						if(Number(_request.transferOrder.payment) == 0){
+							_request.requestStatus = 'Complete';
+							_request.transferOrder.payment = Number(_request.transferOrder.shippingCost);
+							item.totalPayment = Number(item.totalPayment) + Number(_request.transferOrder.payment);
+							_r = _request;
+						}
+					}
+				});
+				_item = item;
+			} 
+		});
+		taskInventory.save(function(err2, obj){
+			if(!err2)
+				res.json({ success: true , operation: true, request: _r, item: _item});
+			else {
+				console.log(err2);
+				res.json({ success: true , operation: false});
+			}
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+
+//Load Labour
 router.get('/loadsitelabour', function(req, res) {
   var userId = req.body.userId || req.query.userId;	
   var siteId = req.body.siteId || req.query.siteId;	
@@ -861,97 +1483,406 @@ router.get('/loadsitelabour', function(req, res) {
   });
 });
 
-router.post('/savesitelabour', function(req, res) {
-	var userId = req.body.userId || req.query.userId;
-	var notificationData = req.body.notificationData || req.query.notificationData;
-	var siteData = req.body.siteData || req.query.siteData;
-    var siteDataJson = JSON.parse(siteData); 
-	
-	var notificationDataJson = JSON.parse(notificationData);
-	
-	for(var i=0; i<siteDataJson.labour.length; i++ ){
-		var totalLabourPayment = 0;
-		var totalLabourBill = 0;
-		var bills = siteDataJson.labour[i].billing;
-		for(var j=0; j<bills.length; j++ ){
-			var bill = bills[j];
-			if(bill.approved){
-				var totalBillPayment = 0;
-				for(var k=0; k<bill.payments.length; k++ ){
-					var payment = bill.payments[k];
-					totalBillPayment = eval(totalBillPayment) + eval(payment.payment);
+//Add Labour Data
+router.post('/addlabour', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var newLabour = req.body.newLabour || req.query.newLabour;
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var newLabourJson = JSON.parse(newLabour); 
+  newLabourJson.createdBy = userId;
+  newLabourJson.createDate = new Date();
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		taskLabour.labour.push(newLabourJson);
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true});
 				}
-				siteDataJson.labour[i].billing[j].totalPayment = totalBillPayment;
-				totalLabourBill = eval(totalLabourBill) + eval(bill.billingAmount);
-				totalLabourPayment = eval(totalLabourPayment) + eval(totalBillPayment);
+			});
+			
+			
+		});
+	  }
+	  else res.json({ success: true , operation: true});
+  });
+});
+
+//Edit Labour Data
+router.post('/editlabour', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourData = req.body.labourData || req.query.labourData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var labourDataJson = JSON.parse(labourData); 
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourDataJson.labourId){
+				if(labour.approved == labourDataJson.approved && !labour.approved && labour.active == labourDataJson.active){
+					//Data Updates
+					labour.labourDescription = labourDataJson.labourDescription;
+					labour.contractor = labourDataJson.contractor;
+					labour.contractType = labourDataJson.contractType;
+					labour.rate = labourDataJson.rate;
+					labour.count = labourDataJson.count;
+					labour.updatedBy = userId;
+					labour.updateDate = new Date();
+				} else if(labour.approved == labourDataJson.approved && labour.approved && labour.active != labourDataJson.active){
+					//Activate /De-Activate
+					labour.active = labourDataJson.active;
+					labour.updatedBy = userId;
+					labour.updateDate = new Date();				
+				} else if(labour.approved != labourDataJson.approved && labourDataJson.active){
+					//Approval
+					labour.approved = labourDataJson.approved;
+					labour.approvedBy = userId;
+					labour.approvalDate = new Date();				
+				}  
 			}
-		}
-		siteDataJson.labour[i].totalPayment = totalLabourPayment;
-		siteDataJson.labour[i].totalBill = totalLabourBill;
-	}	
-	console.log('Save step 1 - Complete');
-	//Update labour Data
-	siteLabour.update({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}, {
-			labour: siteDataJson.labour
-		},function(err) {
-		if (err) {
-			res.json({ success: true, operation: false });
-		} else {
-			logger.log('Labour Updated successfully');
-			cnstrntSite.findOne({siteId: siteDataJson.siteId}).exec(function(err, data) {
-				  var totalCost = 0;
-				  var totalPayment = 0;
-				  for(var i=0; i<siteDataJson.labour.length; i++ ){
-					  var labour = siteDataJson.labour[i];
-					  totalCost = eval(totalCost + labour.totalBill);
-					  totalPayment = eval(totalPayment + labour.totalPayment);
-				  }		
-					console.log(1);					  
-				  siteInventory.findOne({siteId: siteDataJson.siteId, taskId: siteDataJson.taskId}).exec(function(err, inventoryData) {
-					  for(var i=0; i<inventoryData.inventory.length; i++ ){
-						  var item = inventoryData.inventory[i];
-						  totalCost = eval(totalCost + item.totalPrice);
-						  totalPayment = eval(totalPayment + item.totalPayment);
-					  }
-					  console.log(2);	
-					  for(var i=0; i<data.taskList.length; i++ ){
-						  if(data.taskList[i].taskId == siteDataJson.taskId){
-							data.taskList[i].actualCost = totalCost;
-							data.taskList[i].totalPayment = totalPayment;
-							break;
-						  }
-					  }	
-					  console.log('Total : ' + totalCost);						  
-					  cnstrntSite.update({siteId: siteDataJson.siteId}, {
-							taskList: data.taskList
-						},function(err) {
-							if (err) {
-								res.json({ success: true, operation: false });
-							} else {
-								logger.log('Task Cost Updated successfully');
-								emailHandler({
-								//Container
-									siteId: siteDataJson.siteId,
-									notificationKey: notificationDataJson.key,
-									subject: notificationDataJson.subject,
-									content: notificationDataJson.message,
-									toIdList: []
-								},{
-									//Call Back
-									success: function(r){
-										logger.log('Email Sent Successfully');
-										res.json({ success: true, operation: true });
-									}, failure: function(){
-										logger.log('Email Sent Failed. But it is still a Successfull Data Entry');
-										res.json({ success: true , operation: true});
-									}
-								});		
-							}
-					  });	
-				  });
-		    });
-		}
-	});
+		});
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',					
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true});
+				}
+			});
+		});		
+	  }
+	  else res.json({ success: true , operation: true});
+  });
+});
+
+router.post('/addlabourbilling', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourId = req.body.labourId || req.query.labourId;
+  
+  var newBill = req.body.newBill || req.query.newBill;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var newBillJson = JSON.parse(newBill); 
+  newBillJson.createdBy = userId;
+  newBillJson.createDate = new Date();
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		var _labour = {};
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourId && labour.active){
+				labour.billing.push(newBillJson);
+				_labour = labour;
+			} 
+		});
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',					
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, labour: _labour });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, labour: _labour });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/deletelabourbill', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourId = req.body.labourId || req.query.labourId;
+  
+  var billId = req.body.billId || req.query.billId;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourId && labour.active){
+				labour.billing.forEach(function(bill){
+					if(bill.billingId == billId && !bill.approved){
+						labour.billing.pull({billingId: bill.billingId});
+					}
+				});
+			} 
+		});
+		taskLabour.save(function(err, obj){
+			//Pull Doesn't Reflect Until Saved!!
+			siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour2) {
+				let _labour = {};
+				taskLabour2.labour.forEach(function(labour2){
+					if(labour2.labourId == labourId){
+						_labour = labour2;
+					}
+				});
+				emailHandler({
+				//Container
+					targeted: false,
+					targetedTo: '',										
+					siteId: siteId,
+					notificationKey: notificationDataJson.key,
+					subject: notificationDataJson.subject,
+					content: notificationDataJson.message,
+					toIdList: []
+				},{
+					//Call Back
+					success: function(r){
+						logger.log('Email Sent Successfully');
+						res.json({ success: true, operation: true, labour: _labour });
+					}, failure: function(){
+						logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+						res.json({ success: true , operation: true, labour: _labour });
+					}
+				});				
+			});
+		});		
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/editlabourbill', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourId = req.body.labourId || req.query.labourId;
+  
+  var billData = req.body.billData || req.query.billData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var billDataJson = JSON.parse(billData); 
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		var _labour = {};
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourId && labour.active){
+				labour.billing.forEach(function(bill){
+					if(bill.billingId == billDataJson.billingId){
+						bill.billingAmount = billDataJson.billingAmount;
+						bill.invoice = billDataJson.invoice;
+						bill.updatedBy = userId;
+						bill.updateDate = new Date();						
+					}
+				});
+				_labour = labour;
+			} 
+		});
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',							
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, labour: _labour });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, labour: _labour });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/approvelabourbill', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourId = req.body.labourId || req.query.labourId;
+  
+  var billId = req.body.billId || req.query.billId;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		var _labour = {};
+		var mailToUser = '';
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourId && labour.active){
+				labour.billing.forEach(function(bill){
+					if(bill.billingId == billId && !bill.approved){
+						bill.approved = true;
+						bill.approvedBy = userId;
+						bill.approvalDate = new Date();
+						mailToUser = bill.createdBy;
+						//Total Bill
+						labour.totalBill = eval(labour.totalBill) + eval(bill.billingAmount);
+					}
+				});
+				_labour = labour;
+			} 
+		});
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: true,
+				targetedTo: mailToUser,							
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, labour: _labour });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, labour: _labour });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/paylabourbill', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var labourId = req.body.labourId || req.query.labourId;
+  var billId = req.body.billId || req.query.billId;
+  
+  var paymentData = req.body.paymentData || req.query.paymentData;
+  
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var paymentDataJson = JSON.parse(paymentData); 
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteLabour.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskLabour) {
+	  if(!err){
+		var _labour = {};
+		taskLabour.labour.forEach(function(labour){
+			if(labour.labourId == labourId){
+				labour.billing.forEach(function(bill){
+					if(bill.billingId == billId){
+						let totalPayment = 0;
+						bill.payments.forEach(function(payment){
+							totalPayment = eval(payment.payment);
+						});
+						
+						let ballance = eval(bill.billingAmount) - eval(totalPayment);
+						if(eval(paymentDataJson.paidAmount) > ballance){
+							return res.json({ success: true, operation: true, labour: labour, dispute: true});
+						} else {
+							bill.payments.push({
+								paymentId: paymentDataJson.paymentId,
+								payment: paymentDataJson.paidAmount,
+								paidBy: userId,
+								paymentDate: new Date()	
+							});
+							bill.totalPayment = eval(bill.totalPayment) + eval(paymentDataJson.paidAmount);
+							labour.totalPayment = eval(labour.totalPayment) + eval(paymentDataJson.paidAmount);
+						}
+					}
+				});
+				_labour = labour;
+			} 
+		});
+		taskLabour.save(function(err, obj){
+			emailHandler({
+			//Container
+				targeted: false,
+				targetedTo: '',								
+				siteId: siteId,
+				notificationKey: notificationDataJson.key,
+				subject: notificationDataJson.subject,
+				content: notificationDataJson.message,
+				toIdList: []
+			},{
+				//Call Back
+				success: function(r){
+					logger.log('Email Sent Successfully');
+					res.json({ success: true, operation: true, labour: _labour, dispute: false });
+				}, failure: function(){
+					logger.log('Email Not Sent. But it is still a Successfull Data Entry');
+					res.json({ success: true , operation: true, labour: _labour, dispute: false });
+				}
+			});
+		});
+	  }
+	  else res.json({ success: true , operation: false});
+  });
 });
 
 app.use('/api', router);

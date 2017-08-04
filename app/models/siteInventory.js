@@ -50,13 +50,18 @@ var consumptionSchema = mongoose.Schema({
 	
 var globalRequestSchema = mongoose.Schema({
 		requestId: String,
+		siteId: String,
+		taskId: String,
+		currentLocation: String,
+		item: String,
+		quantity: Number,
+		uom: String,
 		requestStatus: String,
 		transfer: Boolean,
 		transferOrder: {
 			transferOrderId: String,
 			shippingVendor: String,
 			estimatedDeliveryDays: Number,
-			shippingId: String,
 			shippingCost: Number,
 			shippingType: String,
 			trackingId: String,
@@ -70,7 +75,7 @@ var globalRequestSchema = mongoose.Schema({
 		rejectionDate: Date,
 		approved: Boolean,
 		approvedBy: String,
-		approvalDate: Date		
+		approvalDate: Date	
 	},{ _id : false });	
 	
 var inventorySchema = mongoose.Schema({
@@ -91,7 +96,10 @@ var inventorySchema = mongoose.Schema({
 		createDate: Date,
 		createdBy: String,
 		updatedBy: String,
-		updateDate: Date,		
+		updateDate: Date,
+		approved: Boolean,
+		approvedBy: String,
+		approvalDate: Date,		
 	},{ _id : false });
 
 // set up a mongoose model and pass it using module.exports
