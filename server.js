@@ -286,7 +286,7 @@ router.get('/loadconstructionsitematrix', function(req, res) {
 							if(tsk.taskStatus == 'Hold'){
 								st.taskMatrix.totalHeldTasks = eval(st.taskMatrix.totalHeldTasks + 1); 
 							}
-							if(tsk.taskStatus == 'Started'){
+							if(tsk.taskStatus == 'Running'){
 								st.taskMatrix.totalRunningTasks = eval(st.taskMatrix.totalRunningTasks + 1); 
 							}
 							//Total Cost 
@@ -488,6 +488,8 @@ router.post('/updatetaskstatus', function(req, res) {
 												};
 											}
 											inventory[i].quantity = 0;
+											inventory[i].releasedBy = 'System';
+											inventory[i].releaseDate = new Date();
 										}
 										//Reject All Pending Requests for Items in Task Inventory
 										if(inventory[i].requests.length == 0){
@@ -709,12 +711,10 @@ router.post('/updatesiterequestdetailsallocate', function(req, res) {
   var requestDataJson = JSON.parse(requestData);
   siteInventory.findOne({ 'siteId': requestDataJson.siteId, 'taskId': requestDataJson.taskId }, function(err, taskInventory) {
 	  if(!err){
-		var found = false;
 		taskInventory.inventory.forEach(function(item){
 			if(item.item == requestDataJson.item){
 				item.requests.forEach(function(_request){
 					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Open'){
-						if(!found) found = true;
 						_request.requestStatus = 'Allocated';
 						_request.quantity = Number(requestDataJson.quantity);					
 					}
@@ -778,15 +778,22 @@ router.post('/approveglobalinventoryrequests', function(req, res) {
 	globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
 		if(!err){
 			let _r = {};
+			let _message = 'Allocation Successful';
 			globalDataSet.requests.forEach(function(_request){
 				if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Open'){
-					_request.quantity = Number(requestDataJson.quantity);
-					_request.requestStatus = 'Allocated';
-					_request.approved = true;
+					let removeItem = false;
 					globalDataSet.items.forEach(function(_item){
 						//Assign Quantity from 
-						if(_item.item == requestDataJson.item && _item.currentLocation == requestDataJson.currentLocation){
-							_item.quantity =  Number(_item.quantity) - Number(requestDataJson.quantity);
+						if(_item.item == requestDataJson.item && _item.currentLocation == requestDataJson.currentLocation && _request.requestStatus == 'Open'){
+							if(Number(_item.quantity) >= Number(requestDataJson.quantity)){
+								//Stop Negative Allocation
+								_item.quantity =  Number(_item.quantity) - Number(requestDataJson.quantity);
+								_request.quantity = Number(requestDataJson.quantity);
+								_request.requestStatus = 'Allocated';
+								_request.approved = true;								
+							} else {
+								_message = 'Inventry Quantity is enough to fullfill this Request. Change Allocation';
+							}
 						}
 					});
 					_r = _request;
@@ -794,7 +801,7 @@ router.post('/approveglobalinventoryrequests', function(req, res) {
 			});
 			globalDataSet.save(function(err1, obj){
 				if (!err1) {
-					res.json({ success: true, operation: true, _items: globalDataSet.items, _requests: globalDataSet.requests, _request: _r});
+					res.json({ success: true, operation: true, _items: globalDataSet.items, _requests: globalDataSet.requests, _request: _r, message: _message});
 				} else  res.json({ success: true, operation: false });
 			});			
 		} else res.json({ success: true , operation: false});
@@ -1024,7 +1031,59 @@ router.post('/approveinventory', function(req, res) {
 			});
 		});		
 	  }
-	  else res.json({ success: true , operation: true});
+	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/releaseinventory', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;
+  var selectedItem = req.body.selectedItem || req.query.selectedItem;
+  var notificationData = req.body.notificationData || req.query.notificationData;
+  
+  var notificationDataJson = JSON.parse(notificationData);
+  
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(!err){
+		globalInventory.findOne({configId: "ITEM"},function(err1, globalData) {
+			if(err1) res.json({ success: true , operation: false});
+			else {
+				taskInventory.inventory.forEach(function(item){
+					if(item.item == selectedItem && item.approved){
+						var found = false;
+						for(var j = 0; j<globalData.items.length; j++){
+							//Save Global Items in their own Site Locations
+							if(item.item == globalData.items[j].item && 
+							   siteId == globalData.items[j].currentLocation){
+								 globalData.items[j].quantity = eval(globalData.items[j].quantity) + eval(item.quantity);
+								 found = true;
+							} 
+						}
+						if(!found){
+							globalData.items[globalData.items.length] = {
+								item: item.item,
+								uom: item.uom,
+								quantity: item.quantity,
+								currentLocation: siteId
+							};
+						}
+						item.quantity = 0;
+						item.releasedBy = userId;
+						item.releaseDate = new Date();
+					}		
+				});
+				taskInventory.save(function(err2, obj){
+					if(err2) res.json({ success: true , operation: false});
+					else
+					globalData.save(function(err3, obj){
+						res.json({ success: true , operation: true});	
+					});
+				});
+			}
+		});	
+	  }
+	  else res.json({ success: true , operation: false});
   });
 });
 
@@ -1260,7 +1319,7 @@ router.post('/cancelinventoryrequest', function(req, res) {
 				item.requests.forEach(function(_request){
 					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Rejected'){
 						_request.requestStatus = 'Cancelled';
-						_r = _request
+						_r = _request;
 					}
 				});
 				_item = item;
@@ -1282,8 +1341,12 @@ router.post('/deleteglobalrequestdetails', function(req, res) {
   globalInventory.findOne({configId: 'ITEM'}, function(err, globalDataSet){
 	  if(!err){
 		globalDataSet.requests.forEach(function(_request){
-			if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Shipped'){
-				globalDataSet.requests.pull({requestId: _request.requestId});
+			if(_request.requestId == requestDataJson.requestId){
+				if(_request.transfer &&_request.requestStatus == 'Shipped'){
+					globalDataSet.requests.pull({requestId: _request.requestId});
+				} else if(!_request.transfer && _request.requestStatus == 'Allocated'){
+					globalDataSet.requests.pull({requestId: _request.requestId});
+				}
 			}
 		});
 		globalDataSet.save(function(err2, obj){
@@ -1332,17 +1395,26 @@ router.post('/approveinventoryrequest', function(req, res) {
 		taskInventory.inventory.forEach(function(item){
 			if(item.item == requestDataJson.item){
 				item.requests.forEach(function(_request){
-					if(_request.requestId == requestDataJson.requestId && _request.requestStatus == 'Received'){
+					/*
+						Same Site Requests are Complete the moment they are Acquired
+					*/
+					if(!_request.transfer && _request.requestId == requestDataJson.requestId && _request.requestStatus == 'Allocated'){
+						_request.requestStatus = 'Complete';
+						_request.approved = true;
+						_request.approvedBy = userId;
+						_request.approvalDate = new Date();	
+						item.quantity = Number(item.quantity) + Number(_request.quantity);						
+						_r = _request;
+					}
+					else if(_request.transfer && _request.requestId == requestDataJson.requestId && _request.requestStatus == 'Received'){
 						_request.requestStatus = 'Approved';
 						_request.approved = true;
 						_request.approvedBy = userId;
 						_request.approvalDate = new Date();
-						if(requestDataJson.transfer){
-							//Update Total Price
-							item.totalPrice = Number(item.totalPrice) + Number(_request.transferOrder.shippingCost);
-							//Add Quantity to Inventory
-							item.quantity = Number(item.quantity) + Number(_request.quantity);
-						}
+						//Update Total Price
+						item.totalPrice = Number(item.totalPrice) + Number(_request.transferOrder.shippingCost);
+						//Add Quantity to Inventory
+						item.quantity = Number(item.quantity) + Number(_request.quantity);
 						_r = _request;
 					}
 				});
@@ -1882,6 +1954,63 @@ router.post('/paylabourbill', function(req, res) {
 		});
 	  }
 	  else res.json({ success: true , operation: false});
+  });
+});
+
+router.post('/consumesiteinventory', function(req, res) {
+  var userId = req.body.userId || req.query.userId;	
+  var siteId = req.body.siteId || req.query.siteId;	
+  var taskId = req.body.taskId || req.query.taskId;	
+  var consumptionData = req.body.consumptionData || req.query.consumptionData;
+  var consumptionDataJson = JSON.parse(consumptionData);
+
+  siteInventory.findOne({ 'siteId': siteId, 'taskId': taskId }, function(err, taskInventory) {
+	  if(err) res.json({ success: true , operation: false});
+	  else {
+		  cnstrntSite.findOne({ 'siteId': siteId, 'active': true }, function(err1, siteData) {
+			  if(err1) res.json({ success: true , operation: false});
+			  else {
+				let _item = {};
+				let _m = 'Consumption Information Saved';
+				let reject = false;
+				siteData.taskList.forEach(function(task){
+					if(task.taskId == taskId && task.taskStatus != 'Running'){
+						reject = true;
+						_m = 'Task is not Running. Please refresh to see actual Task status.';
+					}
+				});
+				if(reject) res.json({ success: true , operation: true, item: _item, message: _m});
+				else {
+					reject = false;
+					taskInventory.inventory.forEach(function(item){
+						if(item.item == consumptionDataJson.item){
+							if(Number(item.quantity) >= Number(consumptionDataJson.quantity)){
+								consumptionDataJson.consumedBy = userId;
+								consumptionDataJson.consumedDate = new Date();
+								item.consumption.push(consumptionDataJson);
+								item.quantity = Number(item.quantity) - Number(consumptionDataJson.quantity);
+								_item = item;
+							} else {
+								_item = item;
+								reject = true;
+								_m = 'Invalid Consumption Quantity. Please refresh to see actual Inventory status.';
+							}
+						}
+					});
+					if(!reject)
+						taskInventory.save(function(err2, obj){
+							if(!err2)
+								res.json({ success: true , operation: true, item: _item, message: _m});
+							else {
+								console.log(err2);
+								res.json({ success: true , operation: false});
+							}
+						});
+					else res.json({ success: true , operation: true, item: _item, message: _m});
+				}
+			  }
+		  });
+	  }
   });
 });
 

@@ -99,7 +99,9 @@ var inventorySchema = mongoose.Schema({
 		updateDate: Date,
 		approved: Boolean,
 		approvedBy: String,
-		approvalDate: Date,		
+		approvalDate: Date,
+		releasedBy: String,
+		releaseDate: Date
 	},{ _id : false });
 
 // set up a mongoose model and pass it using module.exports
