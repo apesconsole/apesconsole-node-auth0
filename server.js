@@ -750,6 +750,7 @@ router.post('/updatesiterequestdetailsship', function(req, res) {
 						_request.transferOrder.shippingType = requestDataJson.transferOrder.shippingType;
 						_request.transferOrder.trackingId = requestDataJson.transferOrder.trackingId;
 						_request.transferOrder.shippingCost = requestDataJson.transferOrder.shippingCost;
+						_request.transferOrder.estimatedDeliveryDays = requestDataJson.transferOrder.estimatedDeliveryDays;
 					}
 				});
 			} 
@@ -1460,8 +1461,8 @@ router.post('/payinventoryorder', function(req, res) {
 						order.payments.forEach(function(payment){
 							totalPayment = eval(payment.payment);
 						});
-						let ballance = eval(order.totalPrice) - eval(totalPayment);
-						if(eval(paymentDataJson.paidAmount) > ballance){
+						let balance = eval(order.totalPrice) - eval(totalPayment);
+						if(eval(paymentDataJson.paidAmount) > balance){
 							return res.json({ success: true, operation: true, item: item , dispute: true});
 						} else {
 							order.payments.push({
@@ -1913,8 +1914,8 @@ router.post('/paylabourbill', function(req, res) {
 							totalPayment = eval(payment.payment);
 						});
 						
-						let ballance = eval(bill.billingAmount) - eval(totalPayment);
-						if(eval(paymentDataJson.paidAmount) > ballance){
+						let balance = eval(bill.billingAmount) - eval(totalPayment);
+						if(eval(paymentDataJson.paidAmount) > balance){
 							return res.json({ success: true, operation: true, labour: labour, dispute: true});
 						} else {
 							bill.payments.push({
