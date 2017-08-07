@@ -200,7 +200,7 @@ router.get('/user', function(req, res) {
   var userId = req.body.userId || req.query.userId;
   user.findOne({'userId': userId}, function(err, userData) {
 	userData.password = null;
-	menu.find({'userId': userId }, function(err, menuList) {
+	menu.find({'userId': userId, app: true }, function(err, menuList) {
 		res.json({success: true, data: userData, menu: menuList});
 	});
   });
